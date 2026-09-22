@@ -5,7 +5,7 @@ import java.util.Locale;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 
-import me.Plugins.TLibs.TLibs;
+import net.tfminecraft.tlibs.TLibs;
 
 /**
  * Per-item look and optional denar value. Null value means /wager amount is required.

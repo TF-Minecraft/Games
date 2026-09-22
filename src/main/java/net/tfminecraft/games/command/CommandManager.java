@@ -19,7 +19,7 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
-import me.Plugins.TLibs.TLibs;
+import net.tfminecraft.tlibs.TLibs;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
 import net.tfminecraft.games.cache.Cache;

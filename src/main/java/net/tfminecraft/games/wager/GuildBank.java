@@ -3,9 +3,9 @@ package net.tfminecraft.games.wager;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 
-import me.Plugins.SimpleFactions.Guild.Guild;
-import me.Plugins.SimpleFactions.Managers.FactionManager;
-import me.Plugins.SimpleFactions.Objects.Bank;
+import net.tfminecraft.simplefactions.guild.Guild;
+import net.tfminecraft.simplefactions.managers.FactionManager;
+import net.tfminecraft.simplefactions.objects.Bank;
 import net.tfminecraft.games.Games;
 
 /**

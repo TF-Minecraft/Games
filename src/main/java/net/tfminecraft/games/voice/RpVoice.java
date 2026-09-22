@@ -4,11 +4,11 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import net.tfminecraft.RPCharacters.Loaders.ChatLoader;
-import net.tfminecraft.RPCharacters.Managers.PlayerManager;
-import net.tfminecraft.RPCharacters.Objects.PlayerData;
-import net.tfminecraft.RPCharacters.chat.ChatChannel;
-import net.tfminecraft.RPCharacters.chat.ChatManager;
+import net.tfminecraft.rpcharacters.loaders.ChatLoader;
+import net.tfminecraft.rpcharacters.managers.PlayerManager;
+import net.tfminecraft.rpcharacters.objects.PlayerData;
+import net.tfminecraft.rpcharacters.chat.ChatChannel;
+import net.tfminecraft.rpcharacters.chat.ChatManager;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.layout.TableLayout;
 import net.tfminecraft.games.layout.TableLayout.VoiceLines;

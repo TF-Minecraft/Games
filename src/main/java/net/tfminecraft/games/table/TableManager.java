@@ -60,7 +60,7 @@ import org.joml.Vector3f;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
-import me.Plugins.TLibs.TLibs;
+import net.tfminecraft.tlibs.TLibs;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
 import net.tfminecraft.games.cache.Cache;

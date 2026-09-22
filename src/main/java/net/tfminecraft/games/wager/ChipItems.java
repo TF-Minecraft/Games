@@ -9,8 +9,8 @@ import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
-import net.tfminecraft.DenarEconomy.DenarEconomy;
-import net.tfminecraft.DenarEconomy.Item.Coin;
+import net.tfminecraft.denareconomy.DenarEconomy;
+import net.tfminecraft.denareconomy.item.Coin;
 import net.tfminecraft.games.cache.Cache;
 
 /**
