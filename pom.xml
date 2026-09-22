@@ -9,6 +9,9 @@
     <version>0.1.1</version>
 
     <properties>
+        <simplefactions.version>2.8.7</simplefactions.version>
+        <rpcharacters.version>1.1.7</rpcharacters.version>
+        <denareconomy.version>0.1.9</denareconomy.version>
         <tlibs.version>1.1.0</tlibs.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
@@ -48,25 +51,31 @@
             <systemPath>${project.basedir}/libs/ItemsAdder_3.5.0-r2.jar</systemPath>
         </dependency>
         <dependency>
-            <groupId>local</groupId>
-            <artifactId>DenarEconomy</artifactId>
-            <version>0.1.8</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/denareconomy-0.1.8.jar</systemPath>
+            <groupId>net.tfminecraft</groupId>
+            <artifactId>denareconomy</artifactId>
+            <version>${denareconomy.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
         </dependency>
         <dependency>
-            <groupId>local</groupId>
-            <artifactId>RPCharacters</artifactId>
-            <version>1.1.7</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/rpcharacters-1.1.7.jar</systemPath>
+            <groupId>net.tfminecraft</groupId>
+            <artifactId>rpcharacters</artifactId>
+            <version>${rpcharacters.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
         </dependency>
         <dependency>
-            <groupId>local</groupId>
+            <groupId>net.tfminecraft</groupId>
             <artifactId>simplefactions</artifactId>
-            <version>2.8.7</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/simplefactions-2.8.7.jar</systemPath>
+            <version>${simplefactions.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
