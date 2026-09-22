@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/maven-release.yml
+    with:
+      java-version: '25'
+      # Exact path, not a glob. {version} is replaced with the tag without v.
+      artifact-path: target/games-{version}.jar
+    secrets:
+      DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}

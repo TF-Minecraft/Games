@@ -1,7 +1,7 @@
 main: net.tfminecraft.games.Games
 api-version: '1.21'
 name: Games
-version: 0.1.0
+version: ${project.version}
 author: Drefvelin
 depend: [TLibs, ItemsAdder, ProtocolLib]
 softdepend: [DenarEconomy, RPCharacters, SimpleFactions]
