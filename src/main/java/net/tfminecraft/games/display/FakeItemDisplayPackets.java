@@ -156,10 +156,10 @@ public final class FakeItemDisplayPackets {
 
     private List<WrappedDataValue> buildMetadata(ItemStack item, DisplayPose pose, int delay, int duration) {
         List<WrappedDataValue> values = new ArrayList<>();
-        Serializer intSerializer = WrappedDataWatcher.Registry.get(Integer.class);
-        Serializer vectorSerializer = WrappedDataWatcher.Registry.get(Vector3f.class);
-        Serializer quaternionSerializer = WrappedDataWatcher.Registry.get(Quaternionf.class);
-        Serializer byteSerializer = WrappedDataWatcher.Registry.get(Byte.class);
+        Serializer intSerializer = WrappedDataWatcher.Registry.get((java.lang.reflect.Type) Integer.class, false);
+        Serializer vectorSerializer = WrappedDataWatcher.Registry.get((java.lang.reflect.Type) Vector3f.class, false);
+        Serializer quaternionSerializer = WrappedDataWatcher.Registry.get((java.lang.reflect.Type) Quaternionf.class, false);
+        Serializer byteSerializer = WrappedDataWatcher.Registry.get((java.lang.reflect.Type) Byte.class, false);
 
         values.add(new WrappedDataValue(META_INTERPOLATION_DELAY, intSerializer, delay));
         values.add(new WrappedDataValue(META_INTERPOLATION_DURATION, intSerializer, duration));

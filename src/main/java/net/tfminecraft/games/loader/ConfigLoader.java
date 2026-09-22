@@ -197,6 +197,8 @@ public final class ConfigLoader implements LoaderInterface {
         return new WagerItemOverride(item, value, model, stackMax, layerGap, scale, randomYaw, pitch, threeD, yOffset);
     }
 
+    // Existing configuration accepts legacy enum names and aliases; registry keys are not equivalent.
+    @SuppressWarnings("deprecation")
     public static Sound parseSound(String raw, String path, Sound unknownFallback) {
         if (raw == null || raw.isBlank()) {
             return null;
