@@ -6,8 +6,8 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 /**
- * Torso yaw. Paper / current Spigot expose {@code LivingEntity.getBodyYaw()}; the compile-time
- * spigot-api jar may not, so this is resolved at runtime.
+ * Resolves torso yaw at runtime, falling back to look yaw when the
+ * running server does not expose {@code LivingEntity.getBodyYaw()}.
  */
 public final class BodyYaw {
 
