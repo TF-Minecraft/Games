@@ -12,8 +12,8 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <denareconomy.version>0.2.0</denareconomy.version>
-        <rpcharacters.version>2.0.0</rpcharacters.version>
-        <simplefactions.version>3.0.0</simplefactions.version>
+        <rpcharacters.version>2.0.1</rpcharacters.version>
+        <simplefactions.version>3.0.1</simplefactions.version>
         <tlibs.version>2.0.0</tlibs.version>
     </properties>
 
