@@ -9,6 +9,7 @@
     <version>0.1.1</version>
 
     <properties>
+        <tlibs.version>1.0-tfmc-bbac27e3055d</tlibs.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -23,11 +24,14 @@
             <systemPath>${project.basedir}/libs/spigot-api.jar</systemPath>
         </dependency>
         <dependency>
-            <groupId>local</groupId>
-            <artifactId>TLibs</artifactId>
-            <version>1.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/TLibs.jar</systemPath>
+            <groupId>me.plugins</groupId>
+            <artifactId>tlibs</artifactId>
+            <version>${tlibs.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <!-- The server supplies TLibs and its integrations. -->
+                <exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>local</groupId>

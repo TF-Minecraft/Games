@@ -50,6 +50,11 @@ jobs:
           }
           [[ "${TAG^^}" != *SNAPSHOT* ]] || exit 1
 
+      - name: Install pinned TLibs in Maven
+        uses: TF-Minecraft/TLibs/.github/actions/setup@61bd61b17fba45e5178612578805d7108596e8a0
+        with:
+          token: ${{ secrets.DEPS_TOKEN }}
+
       - name: Prepare pinned dependencies
         env:
           GH_TOKEN: ${{ secrets.DEPS_TOKEN }}
