@@ -40,16 +40,14 @@
         <dependency>
             <groupId>local</groupId>
             <artifactId>ProtocolLib</artifactId>
-            <version>1.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/ProtocolLib.jar</systemPath>
+            <version>1.0-tfmc-ee2e7ab9b538</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>local</groupId>
             <artifactId>ItemsAdder</artifactId>
-            <version>3.5.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/libs/ItemsAdder_3.5.0-r2.jar</systemPath>
+            <version>3.5.0-tfmc-0116d714822b</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>net.tfminecraft</groupId>
