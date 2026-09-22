@@ -41,6 +41,8 @@ public final class WagerChat {
         Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "tellraw " + viewer.getName() + " " + root);
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     public static String itemTitle(ItemStack item) {
         if (item == null) {
             return "item";
@@ -56,6 +58,8 @@ public final class WagerChat {
         return Character.toUpperCase(raw.charAt(0)) + raw.substring(1);
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static String hoverBody(ItemStack item, String title) {
         StringBuilder body = new StringBuilder(title);
         ItemMeta meta = item != null ? item.getItemMeta() : null;

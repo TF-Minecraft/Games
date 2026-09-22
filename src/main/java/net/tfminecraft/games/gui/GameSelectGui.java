@@ -31,6 +31,8 @@ public final class GameSelectGui implements Listener {
 
     public static final GameSelectGui INSTANCE = new GameSelectGui();
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     public static void open(Player player, boolean requireDeck, Location pending) {
         GameSelectHolder holder = new GameSelectHolder(requireDeck, pending);
         Inventory inventory = Bukkit.createInventory(holder, SIZE, Messages.get("place.gui_title"));
@@ -42,6 +44,8 @@ public final class GameSelectGui implements Listener {
         player.openInventory(inventory);
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static ItemStack gameIcon(String gameId, String nameKey) {
         ItemStack item = TLibs.getItemAPI().getCreator().getItemFromPath(Cache.iconOf(gameId));
         if (item == null) {

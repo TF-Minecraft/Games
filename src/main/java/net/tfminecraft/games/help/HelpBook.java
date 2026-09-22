@@ -28,6 +28,8 @@ public record HelpBook(String title, String author, List<String> pages) {
     /**
      * Show the book without giving one away. The player is left holding whatever they had.
      */
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     public void openFor(Player player) {
         if (player == null || isEmpty()) {
             return;
