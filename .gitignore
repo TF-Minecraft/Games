@@ -52,3 +52,6 @@ Desktop.ini
 
 # Local investigation notes and test artifacts
 /.scratch/
+
+# Removed runtime snapshots or generated archives
+/ItemsAdder/tfmc_games.zip
