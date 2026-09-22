@@ -6,7 +6,7 @@
 
     <groupId>net.tfminecraft</groupId>
     <artifactId>games</artifactId>
-    <version>0.2.0</version>
+    <version>main-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
