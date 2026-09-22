@@ -12,7 +12,7 @@
         <simplefactions.version>2.8.7</simplefactions.version>
         <rpcharacters.version>1.1.7</rpcharacters.version>
         <denareconomy.version>0.1.9</denareconomy.version>
-        <tlibs.version>1.1.0</tlibs.version>
+        <tlibs.version>1.1.1</tlibs.version>
         <maven.compiler.release>21</maven.compiler.release>
 
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
