@@ -6,15 +6,15 @@
 
     <groupId>net.tfminecraft</groupId>
     <artifactId>games</artifactId>
-    <version>0.1.1</version>
+    <version>0.2.0</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <denareconomy.version>0.1.9</denareconomy.version>
-        <rpcharacters.version>1.1.7</rpcharacters.version>
-        <simplefactions.version>2.8.7</simplefactions.version>
-        <tlibs.version>1.1.1</tlibs.version>
+        <denareconomy.version>0.2.0</denareconomy.version>
+        <rpcharacters.version>2.0.0</rpcharacters.version>
+        <simplefactions.version>3.0.0</simplefactions.version>
+        <tlibs.version>2.0.0</tlibs.version>
     </properties>
 
     <dependencies>
