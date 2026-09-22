@@ -31,3 +31,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Downloaded build dependencies
+/libs/*.jar
