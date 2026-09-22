@@ -651,6 +651,8 @@ public final class TableManager implements Listener, WagerHost {
         tryDraw(player, table);
     }
 
+    // Retain Bukkit chat-event ordering and String message semantics for existing integrations.
+    @SuppressWarnings("deprecation")
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onPlayChat(AsyncPlayerChatEvent event) {
         String action = playWord(event.getMessage());
@@ -4957,6 +4959,8 @@ public final class TableManager implements Listener, WagerHost {
                 data.streetId, data.anchorX, data.anchorZ, data.x, data.z);
     }
 
+    // Preserve the existing serialized item format so previously saved graves remain readable.
+    @SuppressWarnings("deprecation")
     private static String encodeItem(ItemStack item) {
         if (item == null) {
             return null;
@@ -4972,6 +4976,8 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
+    // Preserve the existing serialized item format so previously saved graves remain readable.
+    @SuppressWarnings("deprecation")
     private static ItemStack decodeItem(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;

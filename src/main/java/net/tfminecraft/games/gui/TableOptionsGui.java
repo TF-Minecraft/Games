@@ -69,6 +69,8 @@ public final class TableOptionsGui implements Listener {
         open(player, false, null, table.getId(), table.getGameId(), TableHouse.from(table));
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static void open(Player player, boolean requireDeck, Location pending, UUID editId, String gameId,
             TableHouse house) {
         if (player == null || house == null) {
@@ -132,6 +134,8 @@ public final class TableOptionsGui implements Listener {
         return n < 1 ? Messages.get("place.options_boxes_open") : String.valueOf(n);
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static ItemStack toggle(Material material, String action, boolean on, String name, String lore) {
         ItemStack item = named(material, action, name);
         ItemMeta meta = item.getItemMeta();
@@ -142,6 +146,8 @@ public final class TableOptionsGui implements Listener {
         return item;
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static ItemStack valueItem(Material material, String action, String name) {
         ItemStack item = named(material, action, name);
         ItemMeta meta = item.getItemMeta();
@@ -152,6 +158,8 @@ public final class TableOptionsGui implements Listener {
         return item;
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     private static ItemStack named(Material material, String action, String name) {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
@@ -253,6 +261,8 @@ public final class TableOptionsGui implements Listener {
         }, CHAT_TICKS);
     }
 
+    // Retain Bukkit chat-event ordering and String message semantics for existing integrations.
+    @SuppressWarnings("deprecation")
     @EventHandler(priority = EventPriority.LOWEST)
     public void onChat(AsyncPlayerChatEvent event) {
         ChatPrompt prompt = prompts.get(event.getPlayer().getUniqueId());

@@ -198,7 +198,7 @@ public final class ConfigLoader implements LoaderInterface {
     }
 
     // Existing configuration accepts legacy enum names and aliases; registry keys are not equivalent.
-    @SuppressWarnings("deprecation")
+    @SuppressWarnings({"deprecation", "removal"})
     public static Sound parseSound(String raw, String path, Sound unknownFallback) {
         if (raw == null || raw.isBlank()) {
             return null;

@@ -44,6 +44,8 @@ public final class WorldAnchors {
         });
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     public static TextDisplay spawnLabel(Location location, String text) {
         if (location == null || location.getWorld() == null) {
             return null;
@@ -77,6 +79,8 @@ public final class WorldAnchors {
         return entity.getPersistentDataContainer().get(Keys.tableId(), PersistentDataType.STRING);
     }
 
+    // Keep the existing legacy text representation, formatting, and exact-string comparisons.
+    @SuppressWarnings("deprecation")
     public static void setText(UUID entityId, String text) {
         if (entityId == null) {
             return;
