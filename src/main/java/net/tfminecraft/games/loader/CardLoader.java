@@ -15,7 +15,7 @@ import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
-import me.Plugins.TLibs.Interface.LoaderInterface;
+import net.tfminecraft.tlibs.interfaces.LoaderInterface;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.card.Card;
 

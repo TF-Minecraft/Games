@@ -6,7 +6,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import net.tfminecraft.RPCharacters.identity.DisplayIdentityService;
+import net.tfminecraft.rpcharacters.identity.DisplayIdentityService;
 import net.tfminecraft.games.Games;
 
 /**

@@ -4,10 +4,10 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import me.Plugins.SimpleFactions.Guild.Guild;
-import me.Plugins.SimpleFactions.Managers.FactionManager;
-import me.Plugins.SimpleFactions.Objects.Bank;
-import me.Plugins.SimpleFactions.enums.GuildModifier;
+import net.tfminecraft.simplefactions.guild.Guild;
+import net.tfminecraft.simplefactions.managers.FactionManager;
+import net.tfminecraft.simplefactions.objects.Bank;
+import net.tfminecraft.simplefactions.enums.GuildModifier;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
 import net.tfminecraft.games.table.Table;

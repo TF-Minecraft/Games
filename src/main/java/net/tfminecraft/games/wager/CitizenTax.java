@@ -2,8 +2,8 @@ package net.tfminecraft.games.wager;
 
 import org.bukkit.entity.Player;
 
-import net.tfminecraft.DenarEconomy.DenarEconomy;
-import net.tfminecraft.DenarEconomy.Loaders.MessageLoader;
+import net.tfminecraft.denareconomy.DenarEconomy;
+import net.tfminecraft.denareconomy.loaders.MessageLoader;
 
 /**
  * Citizen tax on net coin profit from a table round. Uses DenarEconomy {@code doTaxes} so
