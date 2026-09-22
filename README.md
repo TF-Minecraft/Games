@@ -14,9 +14,9 @@ python3 ../tlibs/tools/install-dependency.py --pom pom.xml
 mvn clean verify
 ```
 
-See [TLibs dependency setup](https://github.com/TF-Minecraft/TLibs/blob/v1.1.0/DEPENDENCIES.md)
+See [TLibs dependency setup](https://github.com/TF-Minecraft/TLibs/blob/5da8e77d0e0696bbff7d7064a2644072da9c6428/DEPENDENCIES.md)
 for public release installation, offline builds and rollback.
 Other declared build dependencies still need their usual preparation.
 Use JDK 25 for this TLibs binary; the server must also run Java 25.
 
-Builds and server runtime require Java 25 and [TLibs 1.1.0](https://github.com/TF-Minecraft/TLibs/releases/tag/v1.1.0).
+Builds and server runtime require Java 25. Local builds default to [TLibs 1.1.0](https://github.com/TF-Minecraft/TLibs/releases/tag/v1.1.0); CI resolves the latest published stable TLibs release for each build, verifies its checksum, and uses its exact version throughout that job.
