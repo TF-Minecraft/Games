@@ -41,13 +41,13 @@
         <dependency>
             <groupId>local</groupId>
             <artifactId>ProtocolLib</artifactId>
-            <version>1.0-tfmc-ee2e7ab9b538</version>
+            <version>5.5.0-SNAPSHOT-tfmc-355f7117af95</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>local</groupId>
             <artifactId>ItemsAdder</artifactId>
-            <version>3.5.0-tfmc-0116d714822b</version>
+            <version>4.0.18-tfmc-5a01b37bd744</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -89,13 +89,13 @@
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.10.1</version>
+            <version>2.14.0</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.joml</groupId>
             <artifactId>joml</artifactId>
-            <version>1.10.8</version>
+            <version>1.10.9</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
