@@ -5,8 +5,8 @@ set -euo pipefail
 sha256sum --check .github/dependencies.sha256
 
 mvn -B --no-transfer-progress org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
-    -Dfile="libs/ProtocolLib.jar" -DgroupId="local" -DartifactId="ProtocolLib" \
-    -Dversion="1.0-tfmc-ee2e7ab9b538" -Dpackaging=jar -DgeneratePom=true "$@"
+    -Dfile="libs/ProtocolLib-5.5.0-SNAPSHOT.jar" -DgroupId="local" -DartifactId="ProtocolLib" \
+    -Dversion="5.5.0-SNAPSHOT-tfmc-355f7117af95" -Dpackaging=jar -DgeneratePom=true "$@"
 mvn -B --no-transfer-progress org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file \
-    -Dfile="libs/ItemsAdder_3.5.0-r2.jar" -DgroupId="local" -DartifactId="ItemsAdder" \
-    -Dversion="3.5.0-tfmc-0116d714822b" -Dpackaging=jar -DgeneratePom=true "$@"
+    -Dfile="libs/ItemsAdder-4.0.18.jar" -DgroupId="local" -DartifactId="ItemsAdder" \
+    -Dversion="4.0.18-tfmc-5a01b37bd744" -Dpackaging=jar -DgeneratePom=true "$@"
