@@ -55,3 +55,6 @@ Desktop.ini
 
 # Removed runtime snapshots or generated archives
 /ItemsAdder/tfmc_games.zip
+
+# Technical documentation is maintained in TF-Minecraft/Docs
+/docs/
