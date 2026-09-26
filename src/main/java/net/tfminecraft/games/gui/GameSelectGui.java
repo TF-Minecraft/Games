@@ -68,9 +68,8 @@ public final class GameSelectGui implements Listener {
             return;
         }
         event.setCancelled(true);
-        if (!(event.getWhoClicked() instanceof Player player)) {
-            return;
-        }
+        // Only players can open this menu.
+        Player player = (Player) event.getWhoClicked();
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
             return;
         }
@@ -78,11 +77,9 @@ public final class GameSelectGui implements Listener {
         if (clicked == null || !clicked.hasItemMeta()) {
             return;
         }
+        // Every icon this menu shows carries its game id.
         String gameId = clicked.getItemMeta().getPersistentDataContainer()
                 .get(Keys.guiGame(), PersistentDataType.STRING);
-        if (gameId == null || gameId.isBlank()) {
-            return;
-        }
         GuiSounds.click(player);
         player.closeInventory();
         if ("blackjack".equalsIgnoreCase(gameId)) {

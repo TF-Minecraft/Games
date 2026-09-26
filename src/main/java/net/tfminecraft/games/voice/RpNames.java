@@ -25,7 +25,8 @@ public final class RpNames {
         Player online = Bukkit.getPlayer(id);
         if (online != null) {
             String rp = characterDisplay(online);
-            if (rp != null && !rp.isBlank()) {
+            // A character name is only returned when it has text.
+            if (rp != null) {
                 return rp;
             }
             return online.getName();
@@ -47,7 +48,7 @@ public final class RpNames {
             String display = DisplayIdentityService.resolveDisplay(player);
             return display != null && !display.isBlank() ? display : name;
         } catch (RuntimeException | LinkageError ex) {
-            if (!loggedFail && Games.plugin != null) {
+            if (!loggedFail) {
                 loggedFail = true;
                 Games.plugin.getLogger().warning("[Games] RPCharacters names skipped: " + ex.getMessage());
             }

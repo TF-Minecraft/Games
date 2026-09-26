@@ -83,9 +83,6 @@ public final class GuildTables {
     }
 
     public static int cap(String guildId) {
-        if (guildId == null || guildId.isBlank()) {
-            return 0;
-        }
         try {
             if (!sfReady()) {
                 return 0;
@@ -102,9 +99,6 @@ public final class GuildTables {
     }
 
     public static int count(String guildId) {
-        if (guildId == null || guildId.isBlank()) {
-            return 0;
-        }
         int n = 0;
         for (Table table : TableManager.get().tables()) {
             if (counts(table) && guildId.equals(table.ownerGuildId())) {
@@ -119,7 +113,7 @@ public final class GuildTables {
     }
 
     public static boolean overCap(String guildId) {
-        return guildId != null && !guildId.isBlank() && count(guildId) > cap(guildId);
+        return count(guildId) > cap(guildId);
     }
 
     public static boolean frozen(Table table) {
@@ -127,7 +121,7 @@ public final class GuildTables {
     }
 
     public static boolean canStartGuildAutoRound(Table table) {
-        if (table == null || table.live()) {
+        if (table.live()) {
             return true;
         }
         return !frozen(table);
@@ -148,7 +142,7 @@ public final class GuildTables {
             id = guildId(player);
             house.setOwnerGuildId(id);
         }
-        if (id == null || id.isBlank()) {
+        if (id == null) {
             return "place.no_guild";
         }
         if (!isLeader(id, player)) {
@@ -164,11 +158,8 @@ public final class GuildTables {
     }
 
     public static void tellRefuse(Player player, String key, TableHouse house) {
-        if (player == null || key == null || key.isBlank()) {
-            return;
-        }
         if ("place.no_slots".equals(key)) {
-            String id = house != null ? house.ownerGuildId() : null;
+            String id = house.ownerGuildId();
             player.sendMessage(Messages.get(key,
                     "used", String.valueOf(count(id)),
                     "cap", String.valueOf(cap(id))));
@@ -178,7 +169,7 @@ public final class GuildTables {
     }
 
     public static void stampGuild(Player player, TableHouse house) {
-        if (house == null || house.staffMint()) {
+        if (house.staffMint()) {
             return;
         }
         if (house.ownerGuildId() == null || house.ownerGuildId().isBlank()) {
@@ -203,7 +194,7 @@ public final class GuildTables {
     private static boolean isMember(String guildId, Player player) {
         try {
             Guild guild = guild(guildId);
-            return guild != null && player != null && guild.isMember(player);
+            return guild != null && guild.isMember(player);
         } catch (RuntimeException | LinkageError ex) {
             warn(ex);
             return false;
@@ -213,7 +204,7 @@ public final class GuildTables {
     private static boolean isLeader(String guildId, Player player) {
         try {
             Guild guild = guild(guildId);
-            if (guild == null || player == null) {
+            if (guild == null) {
                 return false;
             }
             String leader = guild.getLeader();
@@ -228,7 +219,7 @@ public final class GuildTables {
     // happen without the matching leg on the felt. See net.tfminecraft.games.wager.GuildBank.
 
     private static Guild guild(String guildId) {
-        if (guildId == null || guildId.isBlank() || !sfReady()) {
+        if (!sfReady()) {
             return null;
         }
         return FactionManager.getGuildByString(guildId);
@@ -240,7 +231,7 @@ public final class GuildTables {
     }
 
     private static void warn(Throwable ex) {
-        if (!loggedFail && Games.plugin != null) {
+        if (!loggedFail) {
             loggedFail = true;
             Games.plugin.getLogger().warning("[Games] SimpleFactions guild tables skipped: " + ex.getMessage());
         }

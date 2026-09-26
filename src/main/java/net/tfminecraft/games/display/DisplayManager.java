@@ -44,7 +44,7 @@ public final class DisplayManager implements Listener {
     }
 
     public boolean spawn(UUID tokenId, Location origin, ItemStack defaultItem, DisplayPose pose) {
-        if (tokenId == null || origin == null || origin.getWorld() == null || !ProtocolLibBridge.isReady()) {
+        if (origin.getWorld() == null || !ProtocolLibBridge.isReady()) {
             return false;
         }
         despawn(tokenId);
@@ -84,7 +84,7 @@ public final class DisplayManager implements Listener {
 
     public void setItemFor(UUID tokenId, Player player, ItemStack item) {
         Token token = tokens.get(tokenId);
-        if (token == null || player == null) {
+        if (token == null) {
             return;
         }
         if (item == null) {
@@ -103,7 +103,7 @@ public final class DisplayManager implements Listener {
 
     public Location worldLocation(UUID tokenId) {
         Token token = tokens.get(tokenId);
-        if (token == null || token.origin == null || token.origin.getWorld() == null) {
+        if (token == null) {
             return null;
         }
         Location loc = token.origin.clone();
@@ -114,7 +114,7 @@ public final class DisplayManager implements Listener {
 
     public DisplayPose poseOf(UUID tokenId) {
         Token token = tokens.get(tokenId);
-        if (token == null || token.pose == null) {
+        if (token == null) {
             return null;
         }
         return copyPose(token.pose);
@@ -126,7 +126,7 @@ public final class DisplayManager implements Listener {
             return null;
         }
         DisplayPose pose = token.otherPose != null ? token.otherPose : token.pose;
-        return pose != null ? copyPose(pose) : null;
+        return copyPose(pose);
     }
 
     public void setLayoutOwner(UUID tokenId, UUID playerId) {
@@ -142,7 +142,7 @@ public final class DisplayManager implements Listener {
         if (token == null || pose == null) {
             return;
         }
-        if (token.otherPose == null && token.pose != null && token.pose.matches(pose)) {
+        if (token.otherPose == null && token.pose.matches(pose)) {
             return;
         }
         token.pose = pose;
@@ -156,7 +156,7 @@ public final class DisplayManager implements Listener {
             return;
         }
         DisplayPose others = otherPose != null ? otherPose : ownerPose;
-        if (token.pose != null && token.pose.matches(ownerPose)
+        if (token.pose.matches(ownerPose)
                 && token.otherPose != null && token.otherPose.matches(others)) {
             return;
         }
@@ -169,7 +169,7 @@ public final class DisplayManager implements Listener {
         int duration = Math.max(0, durationTicks);
         for (UUID viewerId : token.viewers) {
             Player viewer = Bukkit.getPlayer(viewerId);
-            if (viewer != null && viewer.isOnline()) {
+            if (viewer != null) {
                 sendUpdate(viewer, token, 0, duration);
             }
         }
@@ -189,7 +189,13 @@ public final class DisplayManager implements Listener {
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
-        Bukkit.getScheduler().runTask(Games.plugin, () -> showNearby(event.getPlayer()));
+        Player player = event.getPlayer();
+        // A new connection starts with no entities, whatever a token remembers sending before. A token
+        // spawned by a later quit listener can still list the player who was leaving.
+        for (Token token : tokens.values()) {
+            token.viewers.remove(player.getUniqueId());
+        }
+        Bukkit.getScheduler().runTask(Games.plugin, () -> showNearby(player));
     }
 
     @EventHandler
@@ -251,7 +257,7 @@ public final class DisplayManager implements Listener {
     }
 
     private void showNearby(Player viewer) {
-        if (viewer == null || !viewer.isOnline() || !ProtocolLibBridge.isReady()) {
+        if (!viewer.isOnline() || !ProtocolLibBridge.isReady()) {
             return;
         }
         Location loc = viewer.getLocation();
@@ -263,18 +269,14 @@ public final class DisplayManager implements Listener {
     }
 
     private void hideAll(Player viewer) {
-        if (viewer == null || !ProtocolLibBridge.isReady()) {
-            return;
-        }
-        FakeItemDisplayPackets packets = ProtocolLibBridge.getPackets();
         List<Integer> ids = new ArrayList<>();
         for (Token token : tokens.values()) {
             if (token.viewers.remove(viewer.getUniqueId())) {
                 ids.add(token.entityId);
             }
         }
-        if (!ids.isEmpty()) {
-            packets.destroy(viewer, ids);
+        if (!ids.isEmpty() && ProtocolLibBridge.isReady()) {
+            ProtocolLibBridge.getPackets().destroy(viewer, ids);
         }
     }
 
@@ -298,7 +300,7 @@ public final class DisplayManager implements Listener {
     private void refreshItem(Token token) {
         for (UUID viewerId : token.viewers) {
             Player viewer = Bukkit.getPlayer(viewerId);
-            if (viewer != null && viewer.isOnline()) {
+            if (viewer != null) {
                 sendUpdate(viewer, token, 0, 0);
             }
         }
@@ -314,7 +316,7 @@ public final class DisplayManager implements Listener {
         Iterator<UUID> it = token.viewers.iterator();
         while (it.hasNext()) {
             Player viewer = Bukkit.getPlayer(it.next());
-            if (viewer != null && viewer.isOnline()) {
+            if (viewer != null) {
                 packets.destroy(viewer, ids);
             }
             it.remove();
@@ -339,9 +341,6 @@ public final class DisplayManager implements Listener {
 
     private static List<Player> nearby(Location origin) {
         List<Player> out = new ArrayList<>();
-        if (origin == null || origin.getWorld() == null) {
-            return out;
-        }
         double range = Cache.displayRange;
         double rangeSq = range * range;
         for (Player player : origin.getWorld().getPlayers()) {
@@ -353,7 +352,7 @@ public final class DisplayManager implements Listener {
     }
 
     private static boolean inRange(Location a, Location b) {
-        if (a == null || b == null || a.getWorld() == null || !a.getWorld().equals(b.getWorld())) {
+        if (!a.getWorld().equals(b.getWorld())) {
             return false;
         }
         double range = Cache.displayRange;

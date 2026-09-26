@@ -1,5 +1,7 @@
 package net.tfminecraft.games.game;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -20,29 +22,21 @@ final class PotLabel {
      * an empty felt gives back nothing so the hologram does not carry a dead line.
      */
     static String lines(Table table) {
-        if (table == null) {
+        // The ledger only reports owners who have money on the felt.
+        Map<UUID, Integer> totals = WagerEngine.get().totalsExcept(table, table.getId());
+        if (totals.isEmpty()) {
             return "";
         }
-        Map<UUID, Integer> totals = WagerEngine.get().totalsExcept(table, table.getId());
-        StringBuilder text = new StringBuilder();
+        List<String> lines = new ArrayList<>();
         int sum = 0;
         for (Map.Entry<UUID, Integer> entry : totals.entrySet()) {
-            int denars = entry.getValue() != null ? entry.getValue() : 0;
-            if (denars < 1) {
-                continue;
-            }
+            int denars = entry.getValue();
             sum += denars;
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            text.append(Messages.get("label.pot_seat",
+            lines.add(Messages.get("label.pot_seat",
                     "name", RpNames.of(entry.getKey()),
                     "n", String.valueOf(denars)));
         }
-        if (sum < 1) {
-            return "";
-        }
-        text.append("\n").append(Messages.get("label.pot", "n", String.valueOf(sum)));
-        return text.toString();
+        lines.add(Messages.get("label.pot", "n", String.valueOf(sum)));
+        return String.join("\n", lines);
     }
 }

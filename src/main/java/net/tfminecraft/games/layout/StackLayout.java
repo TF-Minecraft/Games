@@ -14,10 +14,8 @@ public final class StackLayout {
             return 0;
         }
         int max = Math.max(1, Cache.stackVisibleMax);
+        // A positive share of a positive maximum always rounds up to at least one layer.
         int layers = (int) Math.ceil(remaining / (double) compositionSize * max);
-        if (layers < 1) {
-            layers = 1;
-        }
         return Math.min(layers, max);
     }
 }

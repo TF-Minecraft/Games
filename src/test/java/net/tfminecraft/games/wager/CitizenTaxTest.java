@@ -19,6 +19,12 @@ class CitizenTaxTest {
         assertEquals(0, CitizenTax.chipsDue(100, 0.0));
         assertEquals(0, CitizenTax.chipsDue(100, -1.0));
         assertEquals(0, CitizenTax.chipsDue(100, Double.NaN));
+        assertEquals(0, CitizenTax.chipsDue(100, Double.POSITIVE_INFINITY));
+    }
+
+    @Test
+    void taxBelowHalfADenarWithholdsNoChips() {
+        assertEquals(0, CitizenTax.chipsDue(100, 0.4));
     }
 
     @Test

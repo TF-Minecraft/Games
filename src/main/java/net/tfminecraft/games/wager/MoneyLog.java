@@ -12,46 +12,6 @@ public final class MoneyLog {
 
     private MoneyLog() {}
 
-    /** Guild bank paid the table. */
-    public static void bankOut(Table table, int denars, String reason) {
-        log(table, "bank -> table", denars, reason);
-    }
-
-    /** Table paid the guild bank. */
-    public static void bankIn(Table table, int denars, String reason) {
-        log(table, "table -> bank", denars, reason);
-    }
-
-    /** Staff mint made chips from nothing. Never allowed on a guild table. */
-    public static void mint(Table table, int denars, String reason) {
-        log(table, "mint -> tray", denars, reason);
-    }
-
-    /** Chips added to the tray. */
-    public static void trayIn(Table table, int denars, String reason) {
-        log(table, "-> tray", denars, reason);
-    }
-
-    /** Chips taken out of the tray. */
-    public static void trayOut(Table table, int denars, String reason) {
-        log(table, "tray ->", denars, reason);
-    }
-
-    /** A player put money on the felt. */
-    public static void stake(Table table, int denars, String reason) {
-        log(table, "player -> felt", denars, reason);
-    }
-
-    /** A player got money back off the felt. */
-    public static void payout(Table table, int denars, String reason) {
-        log(table, "felt -> player", denars, reason);
-    }
-
-    /** Chips deleted without a destination. Should only happen for staff mint. */
-    public static void burn(Table table, int denars, String reason) {
-        log(table, "deleted", denars, reason);
-    }
-
     /** One leg of a transaction, named by where it came from and where it went. */
     public static void move(Table table, String from, String to, int denars, String reason) {
         log(table, from + " -> " + to, denars, reason);

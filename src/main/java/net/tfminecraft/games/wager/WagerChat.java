@@ -1,6 +1,5 @@
 package net.tfminecraft.games.wager;
 
-import java.util.List;
 import java.util.Locale;
 
 import org.bukkit.Bukkit;
@@ -48,13 +47,10 @@ public final class WagerChat {
             return "item";
         }
         ItemMeta meta = item.getItemMeta();
-        if (meta != null && meta.hasDisplayName()) {
+        if (meta.hasDisplayName()) {
             return meta.getDisplayName();
         }
         String raw = item.getType().name().toLowerCase(Locale.ROOT).replace('_', ' ');
-        if (raw.isEmpty()) {
-            return item.getType().name();
-        }
         return Character.toUpperCase(raw.charAt(0)) + raw.substring(1);
     }
 
@@ -62,16 +58,10 @@ public final class WagerChat {
     @SuppressWarnings("deprecation")
     private static String hoverBody(ItemStack item, String title) {
         StringBuilder body = new StringBuilder(title);
-        ItemMeta meta = item != null ? item.getItemMeta() : null;
-        if (meta != null && meta.hasLore()) {
-            List<String> lore = meta.getLore();
-            if (lore != null) {
-                for (String line : lore) {
-                    if (line == null) {
-                        continue;
-                    }
-                    body.append('\n').append(line);
-                }
+        ItemMeta meta = item.getItemMeta();
+        if (meta.hasLore()) {
+            for (String line : meta.getLore()) {
+                body.append('\n').append(line);
             }
         }
         return body.toString();
@@ -79,7 +69,7 @@ public final class WagerChat {
 
     private static JsonObject textNode(String raw) {
         JsonObject node = new JsonObject();
-        node.addProperty("text", raw == null ? "" : raw);
+        node.addProperty("text", raw);
         return node;
     }
 }

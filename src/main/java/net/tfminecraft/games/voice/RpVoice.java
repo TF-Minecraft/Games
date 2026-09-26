@@ -26,12 +26,10 @@ public final class RpVoice {
         if (player == null || layout == null || key == null || key.isBlank()) {
             return;
         }
+        // Layouts always carry voice lines, and an unknown or unset line reads as blank.
         VoiceLines voice = layout.voice();
-        if (voice == null) {
-            return;
-        }
         String line = voice.line(key);
-        if (line == null || line.isBlank()) {
+        if (line.isBlank()) {
             return;
         }
         String channelId = voice.channel();
@@ -45,7 +43,7 @@ public final class RpVoice {
         try {
             speak(player, channelId, line);
         } catch (RuntimeException | LinkageError ex) {
-            if (!loggedFail && Games.plugin != null) {
+            if (!loggedFail) {
                 loggedFail = true;
                 Games.plugin.getLogger().warning("[Games] RPCharacters voice skipped: " + ex.getMessage());
             }

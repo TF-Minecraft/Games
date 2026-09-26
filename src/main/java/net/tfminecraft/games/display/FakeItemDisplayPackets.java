@@ -53,9 +53,6 @@ public final class FakeItemDisplayPackets {
 
     public void spawn(Player viewer, int entityId, UUID entityUuid, Location location, ItemStack item,
             DisplayPose pose) {
-        if (viewer == null || location == null || location.getWorld() == null) {
-            return;
-        }
         send(viewer, createSpawnPacket(entityId, entityUuid, location));
         // Duration 0 can leave left_rotation at identity on the client; 1 tick snaps the pose.
         send(viewer, createMetadataPacket(entityId, item, pose, 0, 1));
@@ -67,9 +64,6 @@ public final class FakeItemDisplayPackets {
     }
 
     public void destroy(Player viewer, List<Integer> entityIds) {
-        if (viewer == null || entityIds == null || entityIds.isEmpty()) {
-            return;
-        }
         PacketContainer packet = protocolManager.createPacket(PacketType.Play.Server.ENTITY_DESTROY);
         packet.getIntLists().write(0, entityIds);
         send(viewer, packet);
@@ -119,7 +113,7 @@ public final class FakeItemDisplayPackets {
 
     private static InternalStructure readFirstStructure(PacketContainer packet) {
         List<InternalStructure> structures = packet.getStructures().getValues();
-        if (structures == null || structures.isEmpty()) {
+        if (structures.isEmpty()) {
             throw new IllegalStateException("Packet has no writable position structure: " + packet.getType());
         }
         return structures.get(0);
@@ -140,10 +134,6 @@ public final class FakeItemDisplayPackets {
         if (bytes.size() >= 3) {
             bytes.write(2, (byte) 0); // head yaw
         }
-    }
-
-    private static byte angleToByte(float angle) {
-        return (byte) (int) (angle * 256.0F / 360.0F);
     }
 
     private PacketContainer createMetadataPacket(int entityId, ItemStack item, DisplayPose pose, int delay,
@@ -193,10 +183,8 @@ public final class FakeItemDisplayPackets {
         try {
             protocolManager.sendServerPacket(viewer, packet);
         } catch (Exception e) {
-            if (Games.plugin != null) {
-                Games.plugin.getLogger().warning(
-                        "[Games] Failed to send ItemDisplay packet to " + viewer.getName() + ": " + e.getMessage());
-            }
+            Games.plugin.getLogger().warning(
+                    "[Games] Failed to send ItemDisplay packet to " + viewer.getName() + ": " + e.getMessage());
         }
     }
 }

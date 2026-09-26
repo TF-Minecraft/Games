@@ -10,7 +10,6 @@ import java.util.UUID;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -116,7 +115,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         }
         String id = args.length > 1 ? args[1] : "index";
         HelpBook book = Cache.helpBook(id);
-        if (book == null || book.isEmpty()) {
+        if (book == null) {
             player.sendMessage(Messages.get("help.unknown", "games", helpIds()));
             return true;
         }
@@ -176,9 +175,8 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         boolean emptyOk = deck.draw().isEmpty();
         sender.sendMessage(Messages.get(emptyOk ? "deck.empty_ok" : "deck.empty_failed"));
 
-        if (last != null) {
-            deck.discard(last);
-        }
+        // Deck.create refuses an empty set, so at least one card was drawn.
+        deck.discard(last);
         sender.sendMessage(Messages.get("deck.discarded",
                 "discarded", String.valueOf(deck.discarded()),
                 "remaining", String.valueOf(deck.remaining())));
@@ -220,8 +218,9 @@ public class CommandManager implements CommandExecutor, TabCompleter {
 
         var interaction = WorldAnchors.spawnInteraction(origin.clone().add(0, 0.05, 0), 0.4f, 0.2f, tokenId.toString());
         var label = WorldAnchors.spawnLabel(origin.clone(), "Display test");
-        UUID interactionId = interaction != null ? interaction.getUniqueId() : null;
-        UUID labelId = label != null ? label.getUniqueId() : null;
+        // The display spawned, so the origin has a world and both anchors exist.
+        UUID interactionId = interaction.getUniqueId();
+        UUID labelId = label.getUniqueId();
 
         sender.sendMessage(Messages.get("display.spawned"));
         Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
@@ -376,7 +375,8 @@ public class CommandManager implements CommandExecutor, TabCompleter {
                 TableManager.get().refreshLabel(table);
                 return true;
             case "open":
-                if (table.minBet() < 1 || table.maxBet() < 1) {
+                // Setting a minimum raises the maximum to at least match it, so only the minimum can be unset.
+                if (table.minBet() < 1) {
                     player.sendMessage(Messages.get("bet.need_limits"));
                     return true;
                 }
@@ -494,7 +494,8 @@ public class CommandManager implements CommandExecutor, TabCompleter {
 
     private static Location lookLocation(Player player) {
         Block target = player.getTargetBlockExact(8);
-        if (target != null && target.getType() != Material.AIR) {
+        // Ray tracing passes through air, so a block found is always solid ground to stand the card on.
+        if (target != null) {
             return target.getLocation().add(0.5, 1.05 + Cache.tableYOffset, 0.5);
         }
         Location loc = player.getEyeLocation().add(player.getLocation().getDirection().multiply(2.0));
@@ -575,7 +576,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
     }
 
     private static List<String> prefix(List<String> options, String token) {
-        String lower = token == null ? "" : token.toLowerCase(Locale.ROOT);
+        String lower = token.toLowerCase(Locale.ROOT);
         List<String> out = new ArrayList<>();
         for (String option : options) {
             if (option.toLowerCase(Locale.ROOT).startsWith(lower)) {

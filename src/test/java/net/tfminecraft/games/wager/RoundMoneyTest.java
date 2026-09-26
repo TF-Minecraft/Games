@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.util.List;
 import java.util.UUID;
 
+import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import net.tfminecraft.games.cache.Cache;
 
 class RoundMoneyTest {
 
@@ -15,10 +19,18 @@ class RoundMoneyTest {
     private static final UUID OTHER = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
     private RoundMoney round;
+    private WagerItemOverride previousGold;
 
     @BeforeEach
     void setUp() {
+        previousGold = Cache.wagerGold;
+        Cache.wagerGold = new WagerItemOverride("GOLD_NUGGET", 1, null, null, null, null, null, null, false, null);
         round = new RoundMoney();
+    }
+
+    @AfterEach
+    void restoreConfig() {
+        Cache.wagerGold = previousGold;
     }
 
     @Test
@@ -55,8 +67,8 @@ class RoundMoneyTest {
 
     @Test
     void ignoresLootStakes() {
-        Stake coin = new Stake(null, "coin:gold_coin", 10, 2, 0);
-        Stake loot = new Stake(null, "item:loot", 100, 1, 0);
+        Stake coin = new Stake(new ItemStack(Material.GOLD_NUGGET), "gold", 10, 2, 0);
+        Stake loot = new Stake(new ItemStack(Material.DIAMOND), "item:DIAMOND", 100, 1, 0);
         round.recordLeg(testPlayer(PLAYER), felt(), List.of(coin, loot));
         assertEquals(20, round.moneyIn(PLAYER));
     }
@@ -111,9 +123,36 @@ class RoundMoneyTest {
         assertEquals(0, round.taxableProfit(PLAYER, 30));
     }
 
+    @Test
+    void lootOnlyLegRecordsNoMoney() {
+        round.recordLeg(testPlayer(PLAYER), felt(),
+                List.of(new Stake(new ItemStack(Material.DIAMOND), "item:DIAMOND", 100, 1, 0)));
+        assertEquals(0, round.moneyIn(PLAYER));
+    }
+
+    @Test
+    void coinsDroppedAtTheTableForNobodyAreNoPlayersMoneyOut() {
+        round.recordLeg(felt(), new PlayerAccount(null, null, null, null, 0), coins(30));
+        assertEquals(0, round.moneyOut(PLAYER));
+        assertEquals(0, round.moneyOut(OTHER));
+    }
+
+    @Test
+    void wonProfitAccumulatesPositivePayoutsAndIsASnapshot() {
+        round.recordProfit(PLAYER, 5);
+        round.recordProfit(PLAYER, 0);
+        round.recordProfit(PLAYER, 7);
+        var snapshot = round.wonProfit();
+        round.recordProfit(OTHER, 3);
+        assertEquals(java.util.Map.of(PLAYER, 12), snapshot);
+        assertEquals(java.util.Map.of(PLAYER, 12, OTHER, 3), round.wonProfit());
+        round.clear();
+        assertEquals(java.util.Map.of(), round.wonProfit());
+    }
+
     private static List<Stake> coins(int denars) {
         int unit = denars;
-        return List.of(new Stake(null, "coin:gold_coin", unit, 1, 0));
+        return List.of(new Stake(new ItemStack(Material.GOLD_NUGGET), "gold", unit, 1, 0));
     }
 
     private static PlayerAccount testPlayer(UUID id) {

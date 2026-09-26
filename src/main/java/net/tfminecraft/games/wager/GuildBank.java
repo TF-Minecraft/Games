@@ -131,7 +131,7 @@ final class GuildBank {
     }
 
     private static void warn(Throwable ex) {
-        if (!loggedFail && Games.plugin != null) {
+        if (!loggedFail) {
             loggedFail = true;
             Games.plugin.getLogger().warning("[Games] SimpleFactions guild bank skipped: " + ex.getMessage());
         }

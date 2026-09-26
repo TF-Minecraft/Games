@@ -59,7 +59,7 @@ public final class CoinPlanner {
      * far short their coins fall rather than only that they fell short.
      */
     public static int best(List<Slot> slots, int target) {
-        if (slots == null || slots.isEmpty() || target < 1) {
+        if (target < 1) {
             return 0;
         }
         int held = available(slots);
@@ -117,7 +117,7 @@ public final class CoinPlanner {
 
     /** Slots ordered biggest coin first, so a plan hands over as few items as it can. */
     public static List<Slot> biggestFirst(List<Slot> slots) {
-        List<Slot> out = new ArrayList<>(slots == null ? List.of() : slots);
+        List<Slot> out = new ArrayList<>(slots);
         out.sort((a, b) -> Integer.compare(b.unit(), a.unit()));
         return out;
     }
@@ -126,7 +126,7 @@ public final class CoinPlanner {
         if (left == 0) {
             return true;
         }
-        if (left < 0 || index >= slots.size()) {
+        if (index >= slots.size()) {
             return false;
         }
         long key = ((long) index << 32) | left;

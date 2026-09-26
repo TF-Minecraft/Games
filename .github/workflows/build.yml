@@ -74,3 +74,14 @@ jobs:
           name: unit-test-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/surefire-reports/
           if-no-files-found: error
+
+      - name: Check coverage report exists
+        run: test -f target/site/jacoco/jacoco.xml || { echo "::error::JaCoCo did not write target/site/jacoco/jacoco.xml"; exit 1; }
+
+      - name: Upload coverage reports
+        if: ${{ !cancelled() && hashFiles('target/site/jacoco/jacoco.xml') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/site/jacoco/
+          if-no-files-found: error

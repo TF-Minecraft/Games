@@ -24,7 +24,7 @@ public final class Table {
 
     private final UUID id;
     private final String gameId;
-    private Location origin;
+    private final Location origin;
     private float yaw;
     private Deck deck;
     private final List<UUID> stackTokens = new ArrayList<>();
@@ -88,10 +88,6 @@ public final class Table {
         return origin;
     }
 
-    public void setOrigin(Location origin) {
-        this.origin = origin;
-    }
-
     public float getYaw() {
         return yaw;
     }
@@ -138,8 +134,17 @@ public final class Table {
         return hands;
     }
 
+    /** The hand to deal into, created empty for a player who holds none yet. */
     public List<HandCard> handOf(UUID playerId) {
         return hands.computeIfAbsent(playerId, key -> new ArrayList<>());
+    }
+
+    /**
+     * The cards a player holds here, or none, without creating a hand. Reading through handOf
+     * would leave an empty hand behind for someone who has left, which nothing then returns.
+     */
+    public List<HandCard> heldBy(UUID playerId) {
+        return hands.getOrDefault(playerId, List.of());
     }
 
     public Map<String, List<HandCard>> tablePiles() {
@@ -153,7 +158,7 @@ public final class Table {
 
     public boolean tablePilesEmpty() {
         for (List<HandCard> pile : tablePiles.values()) {
-            if (pile != null && !pile.isEmpty()) {
+            if (!pile.isEmpty()) {
                 return false;
             }
         }
@@ -222,7 +227,7 @@ public final class Table {
         if (flying != null) {
             payoutFlying.addAll(flying);
             for (PayoutFlight flight : flying) {
-                if (flight != null && flight.destId() != null) {
+                if (flight.destId() != null) {
                     payoutDests.add(flight.destId());
                 }
             }
@@ -409,11 +414,11 @@ public final class Table {
     }
 
     public ShufflePolicy shufflePolicy() {
-        return shufflePolicy != null ? shufflePolicy : ShufflePolicy.SHOE;
+        return shufflePolicy;
     }
 
     public void setShufflePolicy(ShufflePolicy shufflePolicy) {
-        this.shufflePolicy = shufflePolicy != null ? shufflePolicy : ShufflePolicy.SHOE;
+        this.shufflePolicy = shufflePolicy;
     }
 
     public int smallBlind() {

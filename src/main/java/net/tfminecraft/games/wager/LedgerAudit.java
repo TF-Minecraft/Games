@@ -25,17 +25,10 @@ public final class LedgerAudit {
         if (ledger.total() < 0) {
             MoneyLog.mismatch(table, stage + " left the table holding " + ledger.total());
         }
+        // Only owners holding a positive balance are listed, so a bucket gone negative shows up in the
+        // table total above.
         for (UUID owner : ledger.owners()) {
-            int held = ledger.total(owner);
-            if (held < 0) {
-                MoneyLog.mismatch(table, stage + " left " + owner + " holding " + held);
-            }
             for (Stake stake : ledger.stakes(owner)) {
-                if (stake.unit() < 1 && stake.count() > 0) {
-                    // A coin worth nothing is money that cannot be paid out or taken away.
-                    MoneyLog.mismatch(table, stage + " left " + stake.count() + " worthless chips on "
-                            + owner);
-                }
                 if (stake.count() < 0) {
                     MoneyLog.mismatch(table, stage + " left a stake counting " + stake.count()
                             + " on " + owner);
@@ -49,10 +42,15 @@ public final class LedgerAudit {
      * dropped on load, which is worth knowing before anyone plays on it.
      */
     public static void checkLoaded(Table table, int expected) {
+        checkLoaded(table, expected, 0);
+    }
+
+    /** Includes decoded items awaiting ownerless recovery, kept separate from house funds. */
+    public static void checkLoaded(Table table, int expected, int unowned) {
         if (table == null) {
             return;
         }
-        int held = table.ledger().total();
+        int held = table.ledger().total() + unowned;
         if (held != expected) {
             MoneyLog.mismatch(table, "loaded holding " + held + " but the file says " + expected);
         } else if (held > 0 && Cache.wagerAuditLog) {

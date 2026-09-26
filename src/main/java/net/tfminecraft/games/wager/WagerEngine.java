@@ -48,42 +48,39 @@ public final class WagerEngine {
 
     /** Every denar this table is holding, tray included. */
     public int total(Table table) {
-        return table == null ? 0 : table.ledger().total();
+        return table.ledger().total();
     }
 
     /** Money in play: everything except the house tray. */
     public int felt(Table table) {
-        return table == null ? 0 : table.ledger().totalExcept(table.getId());
+        return table.ledger().totalExcept(table.getId());
     }
 
     public int owned(Table table, UUID owner) {
-        return table == null || owner == null ? 0 : table.ledger().total(owner);
+        return table.ledger().total(owner);
     }
 
     public int owned(Table table, UUID owner, int street) {
-        return table == null || owner == null ? 0 : table.ledger().total(owner, street);
+        return table.ledger().total(owner, street);
     }
 
     public int tray(Table table) {
-        return table == null ? 0 : table.ledger().total(table.getId());
+        return table.ledger().total(table.getId());
     }
 
     /** Owner to denars, skipping one bucket. Used for pot levels. */
     public Map<UUID, Integer> totalsExcept(Table table, UUID skip) {
-        return table == null ? Map.of() : table.ledger().totalsExcept(skip);
+        return table.ledger().totalsExcept(skip);
     }
 
     /** Everyone holding money, in the order they first staked. */
     public List<UUID> owners(Table table) {
-        return table == null ? List.of() : new ArrayList<>(table.ledger().owners());
+        return new ArrayList<>(table.ledger().owners());
     }
 
     /** Everyone holding money except the tray. In poker this is the pot. */
     public List<UUID> potOwners(Table table) {
         List<UUID> out = new ArrayList<>();
-        if (table == null) {
-            return out;
-        }
         for (UUID owner : table.ledger().owners()) {
             if (!owner.equals(table.getId())) {
                 out.add(owner);
@@ -103,9 +100,6 @@ public final class WagerEngine {
 
     /** Coin denars in the pot, excluding loot stakes. */
     public int coinPot(Table table) {
-        if (table == null) {
-            return 0;
-        }
         int sum = 0;
         for (UUID owner : potOwners(table)) {
             for (Stake stake : table.ledger().stakes(owner)) {
@@ -113,28 +107,6 @@ public final class WagerEngine {
             }
         }
         return sum;
-    }
-
-    /**
-     * The smallest coin a bucket holds, so anything the house has to create is as divisible as
-     * the money already on the table.
-     */
-    public ItemStack template(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return null;
-        }
-        ItemStack template = table.ledger().template(owner);
-        if (template == null) {
-            return null;
-        }
-        ItemStack one = template.clone();
-        one.setAmount(1);
-        return one;
-    }
-
-    /** Denars one of these items is worth. */
-    public int unitOf(ItemStack stack) {
-        return ChipItems.unitDenars(stack);
     }
 
     // ---------------------------------------------------------------- sweeping
@@ -145,9 +117,6 @@ public final class WagerEngine {
      */
     public TxResult sweepPot(Table table, Player dest, UUID winner, List<PayoutFlight> flights,
             String reason) {
-        if (table == null) {
-            return TxResult.nothing();
-        }
         int coinTotal = coinPot(table);
         int moved = 0;
         if (coinTotal > 0 && winner != null) {
@@ -168,9 +137,6 @@ public final class WagerEngine {
 
     /** Every stake back to whoever put it there, as one movement. */
     public TxResult returnStakes(Table table, List<PayoutFlight> flights, String reason) {
-        if (table == null) {
-            return TxResult.nothing();
-        }
         MoneyTx tx = begin(table, reason).animate(flights);
         for (UUID owner : potOwners(table)) {
             tx.moveAll(Accounts.bucket(table, owner),
@@ -185,9 +151,6 @@ public final class WagerEngine {
      */
     public TxResult refund(Table table, UUID owner, Player dest, int denars,
             List<PayoutFlight> flights, String reason) {
-        if (table == null || owner == null) {
-            return TxResult.nothing();
-        }
         MoneyTx tx = begin(table, reason).animate(flights);
         MoneyAccount from = Accounts.bucket(table, owner);
         MoneyAccount to = Accounts.payee(table, dest, owner);
@@ -206,9 +169,6 @@ public final class WagerEngine {
      */
     public TxResult fundFromHouse(Table table, UUID owner, ItemStack template, int denars,
             Location anchor, String reason) {
-        if (table == null || owner == null) {
-            return TxResult.nothing();
-        }
         return begin(table, reason)
                 .move(Accounts.house(table), Accounts.bucket(table, owner).at(anchor), denars, template)
                 .commit();
@@ -219,9 +179,6 @@ public final class WagerEngine {
      * coins. One movement, so the tray and the bank can never disagree about it.
      */
     public TxResult peelToHouse(Table table, int denars, String reason) {
-        if (table == null) {
-            return TxResult.nothing();
-        }
         return begin(table, reason)
                 .moveUpTo(Accounts.tray(table), Accounts.house(table), denars)
                 .commit();
@@ -230,9 +187,6 @@ public final class WagerEngine {
     /** A losing bet off the felt and into the house tray. */
     public TxResult toTray(Table table, UUID owner, int denars, List<PayoutFlight> flights,
             String reason) {
-        if (table == null || owner == null) {
-            return TxResult.nothing();
-        }
         MoneyTx tx = begin(table, reason).animate(flights);
         MoneyAccount from = Accounts.bucket(table, owner);
         if (denars > 0) {
@@ -246,7 +200,7 @@ public final class WagerEngine {
     /** Pay a share of the pot, drawing from the buckets that built it so the chips fly from there. */
     public TxResult payFromPot(Table table, Player dest, UUID owner, int denars,
             List<PayoutFlight> flights, String reason) {
-        if (table == null || denars < 1 || owner == null) {
+        if (denars < 1) {
             return TxResult.nothing();
         }
         return payPotCoins(table, dest, owner, denars, flights, reason);
@@ -259,7 +213,7 @@ public final class WagerEngine {
     private TxResult payPotCoins(Table table, Player dest, UUID owner, int denars,
             List<PayoutFlight> flights, String reason) {
         int profit = table.roundMoney().taxableProfit(owner, denars);
-        table.roundMoney().recordProfit(owner, profit);
+        int returnedPrincipal = denars - profit;
         CitizenTax.Levy levy = CitizenTax.levy(dest, profit);
         int net = denars - levy.chips();
         MoneyAccount payee = Accounts.payee(table, dest, owner);
@@ -282,6 +236,7 @@ public final class WagerEngine {
             }
             moved += taxMoved;
         }
+        table.roundMoney().recordProfit(owner, Math.max(0, moved - returnedPrincipal));
         return moved > 0 ? TxResult.done(moved, flights) : TxResult.nothing();
     }
 
@@ -291,10 +246,9 @@ public final class WagerEngine {
      */
     public PayWinResult payWin(Table table, Player winner, UUID owner, int profit, Player dealer,
             boolean dealerBacked, ItemStack template, List<PayoutFlight> flights) {
-        if (table == null || profit < 1) {
+        if (profit < 1) {
             return PayWinResult.NONE;
         }
-        table.roundMoney().recordProfit(owner, profit);
         CitizenTax.Levy levy = CitizenTax.levy(winner, profit);
         int net = profit - levy.chips();
         MoneyAccount payee = Accounts.payee(table, winner, owner);
@@ -324,6 +278,7 @@ public final class WagerEngine {
         }
 
         int moved = paidNet + paidTax;
+        table.roundMoney().recordProfit(owner, moved);
         return new PayWinResult(moved, trayMoved, Math.max(0, profit - moved));
     }
 
@@ -332,12 +287,9 @@ public final class WagerEngine {
      * once at the end of a settlement; offline winners are skipped.
      */
     public void announceWins(Table table, String game) {
-        if (table == null) {
-            return;
-        }
         for (Map.Entry<UUID, Integer> entry : table.roundMoney().wonProfit().entrySet()) {
             Player player = Bukkit.getPlayer(entry.getKey());
-            if (player == null || entry.getValue() < 1) {
+            if (player == null) {
                 continue;
             }
             Bukkit.getPluginManager().callEvent(
@@ -359,9 +311,6 @@ public final class WagerEngine {
     /** One player's bet on the current street back to them, leaving earlier streets in the pot. */
     public TxResult refundStreet(Table table, UUID owner, int street, List<PayoutFlight> flights,
             String reason) {
-        if (table == null || owner == null) {
-            return TxResult.nothing();
-        }
         return begin(table, reason).animate(flights)
                 .moveStreet(Accounts.bucket(table, owner),
                         Accounts.payee(table, Accounts.online(owner), owner), street)
@@ -380,9 +329,6 @@ public final class WagerEngine {
     /** As above, keeping the spot a heap was put down on so chips come back where they were. */
     public void restore(Table table, UUID owner, ItemStack item, String typeKey, int unit, int count,
             int street, Double anchorX, Double anchorZ, Double spotX, Double spotZ) {
-        if (table == null || owner == null || item == null || unit < 1 || count < 1) {
-            return;
-        }
         ItemStack one = item.clone();
         one.setAmount(1);
         table.ledger().add(owner, one, typeKey != null ? typeKey : ChipItems.typeKey(one), unit, count,
@@ -394,8 +340,6 @@ public final class WagerEngine {
 
     /** Forget an emptied bucket, including the spot its chips were drawn on. */
     public void forget(Table table, UUID owner) {
-        if (table != null && owner != null) {
-            table.ledger().forget(owner);
-        }
+        table.ledger().forget(owner);
     }
 }
