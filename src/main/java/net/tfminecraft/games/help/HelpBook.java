@@ -21,30 +21,21 @@ public record HelpBook(String title, String author, List<String> pages) {
     /** A book title longer than this is refused by the client. */
     private static final int TITLE_MAX = 32;
 
-    public boolean isEmpty() {
-        return pages == null || pages.isEmpty();
-    }
-
     /**
      * Show the book without giving one away. The player is left holding whatever they had.
+     * The loader only keeps books with pages and always supplies a title and author, though
+     * either may be blank.
      */
     // Keep the existing legacy text representation, formatting, and exact-string comparisons.
     @SuppressWarnings("deprecation")
     public void openFor(Player player) {
-        if (player == null || isEmpty()) {
-            return;
-        }
         ItemStack item = new ItemStack(Material.WRITTEN_BOOK);
         BookMeta meta = (BookMeta) item.getItemMeta();
-        if (meta == null) {
-            return;
-        }
-        meta.setTitle(trim(title == null || title.isBlank() ? "Help" : title));
-        meta.setAuthor(StringFormatter.formatHex(author == null || author.isBlank()
-                ? "The house" : author));
+        meta.setTitle(trim(title.isBlank() ? "Help" : title));
+        meta.setAuthor(StringFormatter.formatHex(author.isBlank() ? "The house" : author));
         List<String> out = new ArrayList<>();
         for (String page : pages) {
-            out.add(StringFormatter.formatHex(page == null ? "" : page));
+            out.add(StringFormatter.formatHex(page));
         }
         meta.setPages(out);
         item.setItemMeta(meta);

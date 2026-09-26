@@ -54,17 +54,18 @@ public final class WagerItemOverride {
     }
 
     public WagerPileStyle style(WagerPileStyle base, int stackUnit) {
-        String display = model != null && !model.isBlank() ? model : (base.model() != null ? base.model() : item);
-        int unit = stackUnit > 0 ? stackUnit : base.stackUnit();
+        // Config loading drops blank models and non-positive sizes, and the base is always the
+        // defaults, which carry no model of their own.
+        String display = model != null ? model : item;
         float resolvedPitch = pitch != null ? pitch : base.pitch();
         if (threeD) {
             resolvedPitch -= 90f;
         }
         return new WagerPileStyle(
-                stackMax != null && stackMax > 0 ? stackMax : base.stackMax(),
-                unit,
-                layerGap != null && layerGap > 0 ? layerGap : base.layerGap(),
-                scale != null && scale > 0 ? scale : base.scale(),
+                stackMax != null ? stackMax : base.stackMax(),
+                stackUnit,
+                layerGap != null ? layerGap : base.layerGap(),
+                scale != null ? scale : base.scale(),
                 randomYaw != null ? randomYaw : base.randomYaw(),
                 display,
                 resolvedPitch,
@@ -72,9 +73,6 @@ public final class WagerItemOverride {
     }
 
     static boolean matchesPath(ItemStack stack, String path) {
-        if (stack == null || stack.getType() == Material.AIR || path == null || path.isBlank()) {
-            return false;
-        }
         String trimmed = path.trim();
         Material vanilla = vanillaMaterial(trimmed);
         if (vanilla != null) {

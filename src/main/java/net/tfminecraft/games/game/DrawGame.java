@@ -25,7 +25,7 @@ import net.tfminecraft.games.wager.WagerEngine;
 /**
  * Five-Draw seats, deal, draw round, and showdown.
  */
-public final class DrawGame implements Game {
+public final class DrawGame implements Game, LiveCardReturns {
 
     public static final String BET = "bet";
     public static final String DRAW = "draw";
@@ -37,6 +37,7 @@ public final class DrawGame implements Game {
         final Set<UUID> acted = new HashSet<>();
         final Set<UUID> capped = new HashSet<>();
         final Set<UUID> drawn = new HashSet<>();
+        UUID pendingDraw;
     }
 
     private final Map<UUID, Street> streets = new HashMap<>();
@@ -48,29 +49,23 @@ public final class DrawGame implements Game {
 
     @Override
     public boolean allowFreeDraw(Table table, Player player) {
-        return table != null && !table.live();
+        return !table.live();
     }
 
     @Override
     public boolean allowReturnSelected(Table table, Player player) {
-        if (table == null || player == null) {
-            return false;
-        }
         if (!table.live()) {
             return true;
         }
-        if (!DRAW.equals(table.phase()) || !player.getUniqueId().equals(table.actor())) {
+        if (!DRAW.equals(table.phase()) || !seatedActor(table, player.getUniqueId())) {
             return false;
         }
-        Street street = streets.get(table.getId());
-        return street != null && !street.drawn.contains(player.getUniqueId());
+        return streets.get(table.getId()).pendingDraw == null;
     }
 
+    /** TableManager only offers the shoe for claiming while the table is idle. */
     @Override
     public boolean tryClaimDealer(Table table, Player player) {
-        if (table == null || player == null || table.live()) {
-            return false;
-        }
         if (!table.actives().contains(player.getUniqueId())) {
             return false;
         }
@@ -83,9 +78,6 @@ public final class DrawGame implements Game {
 
     @Override
     public void onSessionStart(Table table) {
-        if (table == null) {
-            return;
-        }
         List<Player> online = seatedOnline(table);
         if (online.size() < 2) {
             for (Player player : online) {
@@ -104,9 +96,6 @@ public final class DrawGame implements Game {
 
     @Override
     public void onSessionEnd(Table table) {
-        if (table == null) {
-            return;
-        }
         streets.remove(table.getId());
         TableManager manager = TableManager.get();
         for (UUID id : new ArrayList<>(table.getHands().keySet())) {
@@ -117,41 +106,34 @@ public final class DrawGame implements Game {
 
     @Override
     public void onTableRemoved(Table table) {
-        if (table != null) {
-            streets.remove(table.getId());
-        }
+        streets.remove(table.getId());
     }
 
+    /**
+     * A street exists from the first bet until the hand is settled, and the turn only ever
+     * belongs to a seat while it does.
+     */
     @Override
     public boolean allowPlayChat(Table table, Player player) {
-        return table != null && player != null && table.live()
-                && (BET.equals(table.phase()) || DRAW.equals(table.phase()))
-                && player.getUniqueId().equals(table.actor());
+        if (!(BET.equals(table.phase()) || DRAW.equals(table.phase()))
+                || !seatedActor(table, player.getUniqueId())) {
+            return false;
+        }
+        return streets.get(table.getId()).pendingDraw == null;
     }
 
+    /** TableManager hands words only to the seated actor that allowPlayChat accepted. */
     @Override
     public void onPlayWord(Table table, Player player, String word) {
-        if (table == null || player == null || word == null) {
-            return;
-        }
         Street street = streets.get(table.getId());
-        if (street == null || !table.live()) {
-            return;
-        }
         UUID id = player.getUniqueId();
-        if (street.folded.contains(id)) {
-            return;
-        }
         if (DRAW.equals(table.phase())) {
-            if (!"draw".equals(word)) {
-                return;
-            }
-            if (hasSelected(table, id)) {
+            if (!"draw".equals(word) || hasSelected(table, id)) {
                 return;
             }
             street.drawn.add(id);
             player.sendMessage(Messages.get("draw.stood"));
-            nextDrawActor(table, street, id);
+            nextDrawActor(table, street, SeatOrder.after(table, id));
             return;
         }
         int contrib = streetContrib(table, id);
@@ -191,52 +173,35 @@ public final class DrawGame implements Game {
             }
         }
         street.acted.add(id);
-        finishOrAdvance(table, true);
+        finishOrAdvance(table, new ArrayList<>(table.actives()), true);
     }
 
+    /** TableManager returns cards to a live table only after allowReturnSelected agreed. */
     @Override
     public void onReturnedSelected(Table table, Player player, int count) {
-        if (table == null || player == null || count < 1 || !table.live() || !DRAW.equals(table.phase())) {
-            return;
-        }
         Street street = streets.get(table.getId());
-        if (street == null || street.drawn.contains(player.getUniqueId())) {
-            return;
-        }
         UUID id = player.getUniqueId();
-        if (!id.equals(table.actor()) || street.folded.contains(id)) {
-            return;
-        }
+        street.pendingDraw = id;
         TableManager.get().dealToPlayer(table, player, count, () -> {
-            Table still = TableManager.get().table(table.getId());
-            if (still == null || !still.live() || !DRAW.equals(still.phase())) {
+            // A street that was settled, ended or removed no longer owns this replacement, and a
+            // drawer who left gave up their pending draw with their seat.
+            if (streets.get(table.getId()) != street || !id.equals(street.pendingDraw)) {
                 return;
             }
-            Street liveStreet = streets.get(still.getId());
-            if (liveStreet == null) {
-                return;
-            }
-            liveStreet.drawn.add(id);
-            Player online = Bukkit.getPlayer(id);
-            if (online != null && online.isOnline()) {
-                online.sendMessage(Messages.get("draw.drew", "n", String.valueOf(count)));
-            }
-            nextDrawActor(still, liveStreet, id);
+            street.pendingDraw = null;
+            street.drawn.add(id);
+            player.sendMessage(Messages.get("draw.drew", "n", String.valueOf(count)));
+            nextDrawActor(table, street, SeatOrder.after(table, id));
         });
     }
 
     @Override
     public void onFeltPilesChanged(Table table) {
-        if (table != null) {
-            TableManager.get().refreshLabel(table);
-        }
+        TableManager.get().refreshLabel(table);
     }
 
     @Override
     public void onChipIn(Table table, Player player) {
-        if (table == null || player == null) {
-            return;
-        }
         if (table.dealerId() == null) {
             table.setDealerId(player.getUniqueId());
         }
@@ -257,85 +222,44 @@ public final class DrawGame implements Game {
 
     @Override
     public String extraLabel(Table table) {
-        if (table == null) {
-            return "";
-        }
-        StringBuilder text = new StringBuilder();
+        List<String> lines = new ArrayList<>();
         UUID button = table.dealerId();
         if (button != null) {
-            text.append(Messages.get("label.button", "name", RpNames.of(button)));
+            lines.add(Messages.get("label.button", "name", RpNames.of(button)));
         }
         if (table.live()) {
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            if (SHOWDOWN.equals(table.phase())) {
-                text.append(Messages.get("label.draw_showdown"));
-            } else if (DRAW.equals(table.phase())) {
-                text.append(Messages.get("label.draw_draw"));
-                UUID actor = table.actor();
-                if (actor != null) {
-                    text.append("\n").append(Messages.get("label.turn", "name", RpNames.of(actor)));
-                }
+            String phase = table.phase();
+            if (SHOWDOWN.equals(phase)) {
+                lines.add(Messages.get("label.draw_showdown"));
             } else {
-                text.append(Messages.get("label.draw_bet"));
+                boolean drawing = DRAW.equals(phase);
+                lines.add(Messages.get(drawing ? "label.draw_draw" : "label.draw_bet"));
                 UUID actor = table.actor();
                 if (actor != null) {
-                    text.append("\n").append(Messages.get("label.turn", "name", RpNames.of(actor)));
-                    Street street = streets.get(table.getId());
-                    int toCall = 0;
-                    if (street != null) {
-                        toCall = Math.max(0, street.currentBet - streetContrib(table, actor));
+                    lines.add(Messages.get("label.turn", "name", RpNames.of(actor)));
+                    if (!drawing) {
+                        Street street = streets.get(table.getId());
+                        int toCall = Math.max(0, street.currentBet - streetContrib(table, actor));
+                        lines.add(Messages.get("label.draw_tocall", "n", String.valueOf(toCall)));
                     }
-                    text.append("\n").append(Messages.get("label.draw_tocall", "n", String.valueOf(toCall)));
                 }
             }
         }
         String pot = PotLabel.lines(table);
         if (!pot.isEmpty()) {
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            text.append(pot);
+            lines.add(pot);
         }
-        return text.toString();
+        return String.join("\n", lines);
     }
 
     void passButton(Table table) {
-        passButton(table, table != null ? table.dealerId() : null);
-    }
-
-    void passButton(Table table, UUID from) {
-        if (table == null) {
-            return;
-        }
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        if (from != null && seats.contains(from)) {
-            int i = seats.indexOf(from);
-            table.setDealerId(seats.get((i + 1) % seats.size()));
-            return;
-        }
-        table.setDealerId(seats.get(0));
+        table.setDealerId(SeatOrder.next(table, table.dealerId()));
     }
 
     private void ensureButton(Table table) {
-        if (table == null) {
-            return;
+        if (!table.actives().contains(table.dealerId())) {
+            table.setDealerId(SeatOrder.next(table, null));
         }
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        UUID have = table.dealerId();
-        if (have != null && seats.contains(have)) {
-            return;
-        }
-        table.setDealerId(seats.get(0));
     }
 
     @Override
@@ -350,10 +274,14 @@ public final class DrawGame implements Game {
             street.acted.remove(leaver);
             street.capped.remove(leaver);
             street.drawn.add(leaver);
+            if (leaver.equals(street.pendingDraw)) {
+                street.pendingDraw = null;
+            }
         }
         table.actives().remove(leaver);
         if (leaver.equals(table.dealerId())) {
-            passAfterLeave(table, before, leaver);
+            // The button goes to the next seat round from where the leaver sat.
+            table.setDealerId(SeatOrder.first(SeatOrder.after(before, leaver), table.actives()::contains));
         }
         TableManager.get().refreshLabel(table);
         int streetId = table.street();
@@ -375,37 +303,21 @@ public final class DrawGame implements Game {
             if (stop) {
                 TableManager.get().endSession(table);
             } else {
-                finishOrAdvance(table, false);
+                finishOrAdvance(table, before, false);
             }
         });
     }
 
-    private static void passAfterLeave(Table table, List<UUID> before, UUID leaver) {
-        if (before == null || before.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        int i = before.indexOf(leaver);
-        if (i < 0) {
-            table.setDealerId(table.actives().isEmpty() ? null : table.actives().iterator().next());
-            return;
-        }
-        UUID next = null;
-        for (int step = 1; step <= before.size(); step++) {
-            UUID candidate = before.get((i + step) % before.size());
-            if (!candidate.equals(leaver) && table.actives().contains(candidate)) {
-                next = candidate;
-                break;
-            }
-        }
-        table.setDealerId(next);
+    /** The turn is only ever handed to a seat, so a player who has left cannot act on it. */
+    private static boolean seatedActor(Table table, UUID id) {
+        return id.equals(table.actor()) && table.actives().contains(id);
     }
 
     private static List<Player> seatedOnline(Table table) {
         List<Player> online = new ArrayList<>();
         for (UUID id : table.actives()) {
             Player player = Bukkit.getPlayer(id);
-            if (player != null && player.isOnline()) {
+            if (player != null) {
                 online.add(player);
             }
         }
@@ -413,20 +325,12 @@ public final class DrawGame implements Game {
     }
 
     private static List<Player> dealQueue(Table table) {
-        List<UUID> seats = new ArrayList<>(table.actives());
+        List<UUID> order = SeatOrder.leftOfButton(table);
         List<Player> queue = new ArrayList<>();
-        if (seats.isEmpty()) {
-            return queue;
-        }
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
         for (int round = 0; round < 5; round++) {
-            for (int step = 1; step <= seats.size(); step++) {
-                UUID id = seats.get((button + step) % seats.size());
+            for (UUID id : order) {
                 Player player = Bukkit.getPlayer(id);
-                if (player != null && player.isOnline()) {
+                if (player != null) {
                     queue.add(player);
                 }
             }
@@ -435,9 +339,6 @@ public final class DrawGame implements Game {
     }
 
     private void dealHands(Table table, List<Player> queue, int index) {
-        if (table == null) {
-            return;
-        }
         Table still = TableManager.get().table(table.getId());
         if (still == null || !still.live()) {
             return;
@@ -451,37 +352,22 @@ public final class DrawGame implements Game {
     }
 
     private void startStreet(Table table) {
-        if (table == null || !table.live()) {
-            return;
-        }
         Street street = new Street();
         streets.put(table.getId(), street);
         table.setActor(leftOfButton(table, street));
         TableManager.get().refreshLabel(table);
     }
 
+    /** The first seat after the button still betting this street. */
     private static UUID leftOfButton(Table table, Street street) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((button + step) % seats.size());
-            if (street == null || (!street.folded.contains(id) && !street.capped.contains(id))) {
-                return id;
-            }
-        }
-        return null;
+        return SeatOrder.first(SeatOrder.leftOfButton(table), id -> betting(street, id));
+    }
+
+    private static boolean betting(Street street, UUID id) {
+        return !street.folded.contains(id) && !street.capped.contains(id);
     }
 
     private static int streetContrib(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return 0;
-        }
         return WagerEngine.get().owned(table, owner, table.street());
     }
 
@@ -495,54 +381,45 @@ public final class DrawGame implements Game {
         return live;
     }
 
-    private static UUID nextLive(Table table, Street street, UUID from) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int i = seats.indexOf(from);
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((i + step) % seats.size());
-            if (!street.folded.contains(id) && !street.capped.contains(id)) {
-                return id;
-            }
-        }
-        return null;
-    }
-
+    /**
+     * Every live seat has either acted or is all in. Checking needs the current bet matched, a
+     * short call caps the seat, and a raise clears everyone else's action, so a seat that has
+     * acted has matched the bet.
+     */
     private static boolean streetComplete(Table table, Street street) {
         for (UUID id : liveSeats(table, street)) {
-            if (street.capped.contains(id)) {
-                continue;
-            }
-            if (!street.acted.contains(id) || streetContrib(table, id) < street.currentBet) {
+            if (!street.capped.contains(id) && !street.acted.contains(id)) {
                 return false;
             }
         }
-        return !liveSeats(table, street).isEmpty();
+        return true;
     }
 
-    private void finishOrAdvance(Table table, boolean advance) {
-        if (table == null || !table.live()) {
-            return;
-        }
+    /**
+     * After an action or a departure. {@code seating} is the table as it sat before the change,
+     * so a turn held by a player who has just left passes to the seat after theirs.
+     */
+    private void finishOrAdvance(Table table, List<UUID> seating, boolean advance) {
         Street street = streets.get(table.getId());
+        // No street means the cards are still being dealt, or the hand is already settled.
         if (street == null) {
             TableManager.get().refreshLabel(table);
             return;
         }
-        List<UUID> live = liveSeats(table, street);
-        if (live.size() <= 1) {
-            foldWin(table, live.isEmpty() ? null : live.get(0));
+        if (foldWinIfDecided(table, street)) {
             return;
         }
         if (DRAW.equals(table.phase())) {
-            nextDrawActor(table, street, table.actor());
+            // Only the drawer leaving moves the turn. A drawer waiting on replacement cards is
+            // still seated, so their turn is kept until the cards land.
+            if (!table.actives().contains(table.actor())) {
+                nextDrawActor(table, street, SeatOrder.after(table, seating, table.actor()));
+            }
             return;
         }
         if (streetComplete(table, street)) {
             if (table.street() >= 2) {
-                showdown(table);
+                showdown(table, street);
                 return;
             }
             tellSeated(table, Messages.get("draw.street_done"));
@@ -550,40 +427,42 @@ public final class DrawGame implements Game {
             return;
         }
         UUID actor = table.actor();
-        if (advance) {
-            table.setActor(nextLive(table, street, actor));
-        } else if (actor != null
-                && (street.folded.contains(actor) || street.capped.contains(actor)
-                        || !table.actives().contains(actor))) {
-            table.setActor(nextLive(table, street, actor));
+        // The turn moves on after an action, or when the player holding it has left.
+        if (advance || !table.actives().contains(actor)) {
+            table.setActor(SeatOrder.first(SeatOrder.after(table, seating, actor), id -> betting(street, id)));
         }
         TableManager.get().refreshLabel(table);
+    }
+
+    /** Settles the hand if one live seat or none is left, and says whether it did. */
+    private boolean foldWinIfDecided(Table table, Street street) {
+        List<UUID> live = liveSeats(table, street);
+        if (live.size() > 1) {
+            return false;
+        }
+        foldWin(table, live.isEmpty() ? null : live.getFirst());
+        return true;
     }
 
     private void startDrawRound(Table table, Street street) {
-        if (table == null || street == null || !table.live()) {
-            return;
-        }
         street.drawn.clear();
         table.setPhase(DRAW);
-        table.setActor(leftOfButtonLive(table, street));
+        table.setActor(SeatOrder.first(SeatOrder.leftOfButton(table), id -> !street.folded.contains(id)));
         TableManager.get().refreshLabel(table);
     }
 
-    private void nextDrawActor(Table table, Street street, UUID from) {
-        if (table == null || street == null || !table.live()) {
+    /** Passes the draw to the first seat in {@code order} still to draw. */
+    private void nextDrawActor(Table table, Street street, List<UUID> order) {
+        if (foldWinIfDecided(table, street)) {
             return;
         }
-        List<UUID> live = liveSeats(table, street);
-        if (live.size() <= 1) {
-            foldWin(table, live.isEmpty() ? null : live.get(0));
-            return;
-        }
-        if (allDrawn(live, street)) {
+        List<UUID> waiting = liveSeats(table, street);
+        waiting.removeAll(street.drawn);
+        if (waiting.isEmpty()) {
             startStreetTwo(table, street);
             return;
         }
-        table.setActor(nextDrawLive(table, street, from));
+        table.setActor(SeatOrder.first(order, waiting::contains));
         TableManager.get().refreshLabel(table);
     }
 
@@ -598,54 +477,8 @@ public final class DrawGame implements Game {
         TableManager.get().refreshLabel(table);
     }
 
-    private static boolean allDrawn(List<UUID> live, Street street) {
-        for (UUID id : live) {
-            if (!street.drawn.contains(id)) {
-                return false;
-            }
-        }
-        return !live.isEmpty();
-    }
-
-    private static UUID leftOfButtonLive(Table table, Street street) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((button + step) % seats.size());
-            if (street == null || !street.folded.contains(id)) {
-                return id;
-            }
-        }
-        return null;
-    }
-
-    private static UUID nextDrawLive(Table table, Street street, UUID from) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int i = seats.indexOf(from);
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((i + step) % seats.size());
-            if (!street.folded.contains(id) && !street.drawn.contains(id)) {
-                return id;
-            }
-        }
-        return null;
-    }
-
     private static boolean hasSelected(Table table, UUID id) {
-        List<HandCard> hand = table.getHands().get(id);
-        if (hand == null) {
-            return false;
-        }
-        for (HandCard held : hand) {
+        for (HandCard held : table.heldBy(id)) {
             if (held.isSelected()) {
                 return true;
             }
@@ -653,28 +486,23 @@ public final class DrawGame implements Game {
         return false;
     }
 
-    private void showdown(Table table) {
-        if (table == null || !table.live() || SHOWDOWN.equals(table.phase())) {
-            return;
-        }
+    private void showdown(Table table, Street street) {
+        // Betting is over, so nothing late can settle this hand a second time.
+        streets.remove(table.getId());
         table.setPhase(SHOWDOWN);
         table.setActor(null);
         TableManager manager = TableManager.get();
         manager.refreshLabel(table);
         tellSeated(table, Messages.get("draw.showdown"));
-        Street street = streets.get(table.getId());
-        List<UUID> live = street != null ? liveSeats(table, street) : new ArrayList<>(table.actives());
-        if (live.size() <= 1) {
-            foldWin(table, live.isEmpty() ? null : live.get(0));
-            return;
-        }
+        List<UUID> live = liveSeats(table, street);
         for (UUID id : live) {
+            // A seat restored from disk can still be in the hand while offline.
             Player player = Bukkit.getPlayer(id);
-            if (player != null && player.isOnline()) {
+            if (player != null) {
                 manager.publishHand(table, player);
             }
         }
-        for (String line : HandTalk.bestHand(table.getGameId(), live, id -> cardsOf(table.handOf(id)))) {
+        for (String line : HandTalk.bestHand(table.getGameId(), live, id -> cardsOf(table.heldBy(id)))) {
             tellSeated(table, line);
         }
         payPots(table, live, table.getGameId());
@@ -693,26 +521,16 @@ public final class DrawGame implements Game {
     }
 
     private void payPots(Table table, List<UUID> live, String gameId) {
-        TableManager manager = TableManager.get();
-        Map<UUID, Integer> invested = investedByOwner(table, manager);
-        TreeSet<Integer> levels = new TreeSet<>();
-        for (int put : invested.values()) {
-            if (put > 0) {
-                levels.add(put);
-            }
-        }
+        // The ledger only reports owners with money on the felt, so every total is positive.
+        Map<UUID, Integer> invested = WagerEngine.get().totalsExcept(table, table.getId());
+        TreeSet<Integer> levels = new TreeSet<>(invested.values());
         if (levels.isEmpty()) {
             finishHand(table);
             return;
         }
         List<PayoutFlight> flights = new ArrayList<>();
-        UUID leftover = null;
-        List<UUID> liveOrder = seatOrderLeftOfButton(table, live);
-        if (!liveOrder.isEmpty()) {
-            leftover = liveOrder.get(0);
-        } else if (!live.isEmpty()) {
-            leftover = live.get(0);
-        }
+        // Showdown supplies at least two live seats, all still in the seating order.
+        UUID leftover = SeatOrder.leftOfButton(table, live).getFirst();
         int previous = 0;
         for (int level : levels) {
             int covered = 0;
@@ -721,11 +539,9 @@ public final class DrawGame implements Game {
                     covered++;
                 }
             }
+            // Levels rise strictly and at least one stake reaches each, so every level holds money.
             int amount = (level - previous) * covered;
             previous = level;
-            if (amount < 1) {
-                continue;
-            }
             List<UUID> contestants = new ArrayList<>();
             for (UUID id : live) {
                 if (invested.getOrDefault(id, 0) >= level) {
@@ -736,29 +552,14 @@ public final class DrawGame implements Game {
                 continue;
             }
             List<UUID> winners = rankSeats(table, contestants, gameId);
-            if (winners.isEmpty()) {
-                continue;
-            }
-            leftover = winners.get(0);
+            leftover = winners.getFirst();
             announceWinners(table, winners);
-            payEven(table, manager, flights, winners, amount);
+            payEven(table, flights, winners, amount);
         }
         // Whatever the levels could not split in whole coins goes to one seat.
-        if (leftover != null) {
-            WagerEngine.get().sweepPot(table, Bukkit.getPlayer(leftover), leftover, flights, "pot remainder");
-        }
+        WagerEngine.get().sweepPot(table, Bukkit.getPlayer(leftover), leftover, flights, "pot remainder");
         WagerEngine.get().announceWins(table, "draw");
-        UUID tableId = table.getId();
-        manager.flushPiles(table, flights, () -> {
-            Table still = TableManager.get().table(tableId);
-            if (still != null) {
-                finishHand(still);
-            }
-        });
-    }
-
-    private static Map<UUID, Integer> investedByOwner(Table table, TableManager manager) {
-        return WagerEngine.get().totalsExcept(table, table.getId());
+        finishAfterPayout(table, flights);
     }
 
     private static List<UUID> rankSeats(Table table, List<UUID> contestants, String gameId) {
@@ -768,7 +569,7 @@ public final class DrawGame implements Game {
         HoldemRank.Score best = HoldemRank.Score.none();
         List<UUID> tied = new ArrayList<>();
         for (UUID id : contestants) {
-            HoldemRank.Score score = HoldemRank.best(gameId, cardsOf(table.handOf(id)));
+            HoldemRank.Score score = HoldemRank.best(gameId, cardsOf(table.heldBy(id)));
             if (tied.isEmpty() || score.compareTo(best) > 0) {
                 best = score;
                 tied.clear();
@@ -777,15 +578,14 @@ public final class DrawGame implements Game {
                 tied.add(id);
             }
         }
-        return seatOrderLeftOfButton(table, tied);
+        return SeatOrder.leftOfButton(table, tied);
     }
 
-    /** Split one pot level between winners, as evenly as the coins on the felt allow. */
-    private static void payEven(Table table, TableManager manager, List<PayoutFlight> flights,
-            List<UUID> winners, int amount) {
-        if (amount < 1 || winners.isEmpty()) {
-            return;
-        }
+    /**
+     * Split one pot level between winners, as evenly as the coins on the felt allow. The winners
+     * are among the stakes that reach this level, so every share is at least one coin.
+     */
+    private static void payEven(Table table, List<PayoutFlight> flights, List<UUID> winners, int amount) {
         int n = winners.size();
         int share = amount / n;
         int remnant = amount % n;
@@ -794,9 +594,6 @@ public final class DrawGame implements Game {
             if (remnant > 0) {
                 need++;
                 remnant--;
-            }
-            if (need < 1) {
-                continue;
             }
             WagerEngine.get().payFromPot(table, Bukkit.getPlayer(winner), winner, need, flights, "pot");
         }
@@ -808,45 +605,33 @@ public final class DrawGame implements Game {
         TableManager.get().refreshLabel(table);
     }
 
-    private static List<UUID> seatOrderLeftOfButton(Table table, List<UUID> include) {
-        List<UUID> ordered = new ArrayList<>();
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty() || include == null || include.isEmpty()) {
-            return ordered;
-        }
-        Set<UUID> want = new HashSet<>(include);
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((button + step) % seats.size());
-            if (want.contains(id)) {
-                ordered.add(id);
+    /** Ends the hand once the payout has landed, unless the table was removed meanwhile. */
+    private void finishAfterPayout(Table table, List<PayoutFlight> flights) {
+        UUID tableId = table.getId();
+        TableManager.get().flushPiles(table, flights, () -> {
+            Table still = TableManager.get().table(tableId);
+            if (still != null) {
+                finishHand(still);
             }
-        }
-        return ordered;
+        });
     }
 
     private static List<Card> cardsOf(List<HandCard> held) {
         List<Card> cards = new ArrayList<>();
-        if (held == null) {
-            return cards;
-        }
         for (HandCard card : held) {
-            if (card != null && card.card() != null) {
-                cards.add(card.card());
-            }
+            cards.add(card.card());
         }
         return cards;
     }
 
     /** Everyone else folded, so the whole pot is the last player's. */
     private void foldWin(Table table, UUID winner) {
+        // Betting is over, so a late departure or replacement cannot settle this hand again.
+        streets.remove(table.getId());
+        table.setActor(null);
         if (winner != null) {
             tellSeated(table, Messages.get("draw.win_fold", "name", RpNames.of(winner)));
         }
-        TableManager manager = TableManager.get();
         List<PayoutFlight> flights = new ArrayList<>();
         Player dest = winner != null ? Bukkit.getPlayer(winner) : null;
         if (dest != null) {
@@ -856,13 +641,7 @@ public final class DrawGame implements Game {
             WagerEngine.get().returnStakes(table, flights, "hand abandoned");
         }
         WagerEngine.get().announceWins(table, "draw");
-        UUID tableId = table.getId();
-        manager.flushPiles(table, flights, () -> {
-            Table still = TableManager.get().table(tableId);
-            if (still != null) {
-                finishHand(still);
-            }
-        });
+        finishAfterPayout(table, flights);
     }
 
     private static void tellSeated(Table table, String message) {

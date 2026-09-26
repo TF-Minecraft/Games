@@ -81,9 +81,6 @@ public final class PlayerAccount implements MoneyAccount {
         }
         int given = 0;
         for (Stake stake : stakes) {
-            if (stake.count() < 1 || stake.item() == null) {
-                continue;
-            }
             giveItems(stake);
             given += stake.value();
         }
@@ -108,7 +105,7 @@ public final class PlayerAccount implements MoneyAccount {
         // Smallest first: break as little as will do the job.
         for (int i = groups.size() - 1; i >= 0; i--) {
             Group group = groups.get(i);
-            if (group.unit < 2 || group.count < 1) {
+            if (group.unit < 2) {
                 continue;
             }
             List<ItemStack> into = ChipItems.change(group.one);
@@ -138,9 +135,6 @@ public final class PlayerAccount implements MoneyAccount {
             }
         }
         for (ItemStack made : into) {
-            if (made == null || made.getAmount() < 1) {
-                return null;
-            }
             int unit = ChipItems.unitDenars(made);
             if (unit < 1 || (allowed != null && !allowed.test(made))) {
                 // Change we could not stake would strand value, so leave the coin whole.
@@ -166,9 +160,6 @@ public final class PlayerAccount implements MoneyAccount {
 
     /** Change has to land somewhere. Counts slots as if nothing merges, which is the safe way round. */
     private boolean roomFor(List<ItemStack> into) {
-        if (player == null || !player.isOnline()) {
-            return false;
-        }
         int need = 0;
         for (ItemStack made : into) {
             int max = Math.max(1, made.getMaxStackSize());
@@ -176,7 +167,7 @@ public final class PlayerAccount implements MoneyAccount {
         }
         int free = 0;
         for (ItemStack slot : player.getInventory().getStorageContents()) {
-            if (slot == null || slot.getAmount() < 1) {
+            if (slot == null) {
                 free++;
             }
         }
@@ -191,9 +182,7 @@ public final class PlayerAccount implements MoneyAccount {
             ItemStack items = stake.item().clone();
             items.setAmount(give);
             if (player != null && player.isOnline()) {
-                for (ItemStack rest : player.getInventory().addItem(items).values()) {
-                    drop(rest);
-                }
+                give(items);
             } else {
                 drop(items);
             }
@@ -201,17 +190,19 @@ public final class PlayerAccount implements MoneyAccount {
         }
     }
 
+    /** Into the player's inventory, with whatever does not fit dropped at their feet. */
+    private void give(ItemStack items) {
+        for (ItemStack rest : player.getInventory().addItem(items).values()) {
+            drop(rest);
+        }
+    }
+
+    /**
+     * Only payees and the ground carry a drop spot, and a player's own pockets only receive while
+     * they are online, so there is always somewhere to put the items.
+     */
     private void drop(ItemStack items) {
-        if (items == null || items.getAmount() < 1) {
-            return;
-        }
-        Location at = dropAt;
-        if (at == null && player != null && player.isOnline()) {
-            at = player.getLocation();
-        }
-        if (at == null || at.getWorld() == null) {
-            return;
-        }
+        Location at = dropAt != null ? dropAt : player.getLocation();
         at.getWorld().dropItemNaturally(at, items);
     }
 
@@ -222,7 +213,7 @@ public final class PlayerAccount implements MoneyAccount {
             return out;
         }
         for (ItemStack stack : player.getInventory().getContents()) {
-            if (stack == null || stack.getAmount() < 1) {
+            if (stack == null) {
                 continue;
             }
             if (allowed != null && !allowed.test(stack)) {
@@ -323,10 +314,7 @@ public final class PlayerAccount implements MoneyAccount {
                 return false;
             }
             for (ItemStack made : change.into()) {
-                ItemStack items = made.clone();
-                for (ItemStack rest : player.getInventory().addItem(items).values()) {
-                    drop(rest);
-                }
+                give(made.clone());
             }
             return true;
         }
@@ -337,7 +325,7 @@ public final class PlayerAccount implements MoneyAccount {
             ItemStack[] contents = player.getInventory().getContents();
             for (int slot = 0; slot < contents.length && left > 0; slot++) {
                 ItemStack stack = contents[slot];
-                if (stack == null || stack.getAmount() < 1 || !group.one.isSimilar(stack)) {
+                if (stack == null || !group.one.isSimilar(stack)) {
                     continue;
                 }
                 int take = Math.min(left, stack.getAmount());

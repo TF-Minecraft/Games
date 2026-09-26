@@ -3,7 +3,9 @@ package net.tfminecraft.games.game;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import net.tfminecraft.games.cache.Cache;
 import net.tfminecraft.games.card.Card;
@@ -100,7 +102,8 @@ final class HoldemRank {
                 }
             }
         }
-        return winner == null ? best : best.withCards(gameId, winner);
+        // At least one five-card combination exists, and its category beats Score.none().
+        return best.withCards(gameId, winner);
     }
 
     private static Score ofFive(String gameId, Card[] five) {
@@ -119,81 +122,38 @@ final class HoldemRank {
         if (flush && straightHigh > 0) {
             return Score.of(8, straightHigh, 0, 0, 0, 0);
         }
-        int[] counts = new int[15];
+        // Rank values come from config, so group whatever values the cards carry: biggest group
+        // first, higher value first within a size. The groups are then the score's tie-breakers.
+        Map<Integer, Integer> counts = new HashMap<>();
         for (int v : vals) {
-            if (v >= 0 && v < counts.length) {
-                counts[v]++;
-            }
+            counts.merge(v, 1, Integer::sum);
         }
-        int quad = 0;
-        int trips = 0;
-        int pairHigh = 0;
-        int pairLow = 0;
-        for (int v = 14; v >= 2; v--) {
-            int n = counts[v];
-            if (n >= 4 && quad == 0) {
-                quad = v;
-            } else if (n == 3 && trips == 0) {
-                trips = v;
-            } else if (n == 2) {
-                if (pairHigh == 0) {
-                    pairHigh = v;
-                } else if (pairLow == 0) {
-                    pairLow = v;
-                }
-            }
-        }
-        if (quad > 0) {
-            return Score.of(7, quad, kickerExcept(desc, quad), 0, 0, 0);
-        }
-        if (trips > 0 && pairHigh > 0) {
-            return Score.of(6, trips, pairHigh, 0, 0, 0);
-        }
-        if (flush) {
+        List<Integer> groups = new ArrayList<>(counts.keySet());
+        groups.sort(Comparator.comparingInt((Integer v) -> counts.get(v)).thenComparingInt(v -> v).reversed());
+        int largest = counts.get(groups.getFirst());
+        int category;
+        // Five of a kind is possible when the config maps two ranks to one value, or a set lists a
+        // card twice. It scores as quads, as it always has, rather than falling through to high card.
+        if (largest >= 4) {
+            category = 7;
+        } else if (largest == 3 && groups.size() == 2) {
+            category = 6;
+        } else if (flush) {
             return Score.of(5, desc[0], desc[1], desc[2], desc[3], desc[4]);
-        }
-        if (straightHigh > 0) {
+        } else if (straightHigh > 0) {
             return Score.of(4, straightHigh, 0, 0, 0, 0);
+        } else if (largest == 3) {
+            category = 3;
+        } else if (largest == 2) {
+            category = groups.size() == 3 ? 2 : 1;
+        } else {
+            category = 0;
         }
-        if (trips > 0) {
-            int k1 = 0;
-            int k2 = 0;
-            for (int v : desc) {
-                if (v == trips) {
-                    continue;
-                }
-                if (k1 == 0) {
-                    k1 = v;
-                } else if (k2 == 0) {
-                    k2 = v;
-                    break;
-                }
-            }
-            return Score.of(3, trips, k1, k2, 0, 0);
+        int[] keys = new int[5];
+        for (int i = 0; i < groups.size(); i++) {
+            keys[i] = groups.get(i);
         }
-        if (pairHigh > 0 && pairLow > 0) {
-            return Score.of(2, pairHigh, pairLow, kickerExcept(desc, pairHigh, pairLow), 0, 0);
-        }
-        if (pairHigh > 0) {
-            int k1 = 0;
-            int k2 = 0;
-            int k3 = 0;
-            for (int v : desc) {
-                if (v == pairHigh) {
-                    continue;
-                }
-                if (k1 == 0) {
-                    k1 = v;
-                } else if (k2 == 0) {
-                    k2 = v;
-                } else if (k3 == 0) {
-                    k3 = v;
-                    break;
-                }
-            }
-            return Score.of(1, pairHigh, k1, k2, k3, 0);
-        }
-        return Score.of(0, desc[0], desc[1], desc[2], desc[3], desc[4]);
+        return Score.of(category, keys[0], keys[1], keys[2], keys[3], keys[4]);
     }
 
     private static int straightHigh(int[] sortedAsc) {
@@ -207,18 +167,5 @@ final class HoldemRank {
             }
         }
         return sortedAsc[4];
-    }
-
-    private static int kickerExcept(int[] desc, int... skip) {
-        outer:
-        for (int v : desc) {
-            for (int s : skip) {
-                if (v == s) {
-                    continue outer;
-                }
-            }
-            return v;
-        }
-        return 0;
     }
 }

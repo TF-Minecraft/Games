@@ -3,7 +3,6 @@ package net.tfminecraft.games.layout;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 
 import net.tfminecraft.games.cache.Cache;
@@ -20,12 +19,9 @@ public final class HandAnchor {
     public record Raw(Location location, boolean sitting, float placeYaw) {}
 
     public static Raw resolve(Player player, Location shoe) {
-        if (player != null && player.isInsideVehicle() && shoe != null && shoe.getWorld() != null
-                && player.getWorld().equals(shoe.getWorld())) {
-            Raw rim = sitRim(player, shoe);
-            if (rim != null) {
-                return rim;
-            }
+        // The shoe is a table origin, which always has a world.
+        if (player.isInsideVehicle() && player.getWorld().equals(shoe.getWorld())) {
+            return sitRim(player, shoe);
         }
         Location at = player.getLocation();
         Location stand = at.clone();
@@ -49,8 +45,7 @@ public final class HandAnchor {
         World world = player.getWorld();
         Block skipPlayer = at.getBlock();
         Block skipBelow = skipPlayer.getRelative(0, -1, 0);
-        Entity vehicle = player.getVehicle();
-        Block skipVehicle = vehicle != null ? vehicle.getLocation().getBlock() : null;
+        Block skipVehicle = player.getVehicle().getLocation().getBlock();
         int baseY = at.getBlockY();
         for (double t = RAY_STEP; t <= range + 1e-6; t += RAY_STEP) {
             double x = at.getX() + ux * t;
@@ -74,7 +69,7 @@ public final class HandAnchor {
     }
 
     private static Raw rimOf(Block block, Player player, Location shoe) {
-        double top = shoe != null ? shoe.getY() : block.getY() + 1.0;
+        double top = shoe.getY();
         double cx = block.getX() + 0.5;
         double cz = block.getZ() + 0.5;
         double pdx = player.getLocation().getX() - cx;
@@ -106,9 +101,9 @@ public final class HandAnchor {
         return new Raw(at, true, placeYaw);
     }
 
+    /** Every block compared here comes from the seated player's own world. */
     private static boolean sameBlock(Block block, Block other) {
-        return other != null && block.getWorld().equals(other.getWorld())
-                && block.getX() == other.getX()
+        return block.getX() == other.getX()
                 && block.getY() == other.getY()
                 && block.getZ() == other.getZ();
     }

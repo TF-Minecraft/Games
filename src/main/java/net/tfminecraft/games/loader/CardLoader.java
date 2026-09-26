@@ -68,7 +68,7 @@ public final class CardLoader implements LoaderInterface {
             for (String setName : setsSection.getKeys(false)) {
                 List<String> ids = new ArrayList<>();
                 for (String rawId : setsSection.getStringList(setName)) {
-                    if (rawId == null || rawId.isBlank()) {
+                    if (rawId.isBlank()) {
                         continue;
                     }
                     Card card = get(rawId);
@@ -103,11 +103,9 @@ public final class CardLoader implements LoaderInterface {
             return List.of();
         }
         List<Card> result = new ArrayList<>(ids.size());
+        // Sets are rebuilt with the cards and only list ids that resolved, so every id is known.
         for (String id : ids) {
-            Card card = get(id);
-            if (card != null) {
-                result.add(card);
-            }
+            result.add(get(id));
         }
         return Collections.unmodifiableList(result);
     }

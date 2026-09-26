@@ -50,9 +50,6 @@ public final class Messages {
     }
 
     private static String format(String raw) {
-        if (raw == null) {
-            return "";
-        }
         return StringFormatter.formatHex(raw.replace('&', '\u00A7'));
     }
 }

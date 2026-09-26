@@ -51,7 +51,7 @@ public final class CitizenTax {
      * rounding before chips move.
      */
     static int chipsDue(int moneyProfit, double tax) {
-        if (moneyProfit < 1 || tax <= 0 || Double.isNaN(tax) || Double.isInfinite(tax)) {
+        if (tax <= 0 || Double.isNaN(tax) || Double.isInfinite(tax)) {
             return 0;
         }
         long rounded = Math.round(tax);

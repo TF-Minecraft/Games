@@ -54,13 +54,13 @@ public final class GamesLoader implements LoaderInterface {
             if (poker.leaveDistance() > 0) {
                 Cache.pokerLeaveDistance = poker.leaveDistance();
             }
-            if (poker.cardSet() != null && !poker.cardSet().isBlank()) {
+            if (!poker.cardSet().isBlank()) {
                 Cache.pokerCardSet = poker.cardSet();
             }
-            if (poker.label() != null && !poker.label().isBlank()) {
+            if (!poker.label().isBlank()) {
                 Cache.pokerLabel = poker.label();
             }
-            if (poker.icon() != null && !poker.icon().isBlank()) {
+            if (!poker.icon().isBlank()) {
                 Cache.pokerIcon = poker.icon();
             }
         }
@@ -90,7 +90,7 @@ public final class GamesLoader implements LoaderInterface {
         ConfigurationSection felt = section.getConfigurationSection("felt");
         if (felt != null) {
             String type = felt.getString("type", "ring");
-            if (type != null && type.equalsIgnoreCase("box")) {
+            if (type.equalsIgnoreCase("box")) {
                 box = new FeltBox(
                         felt.getDouble("forward", 0),
                         felt.getDouble("right", 0),

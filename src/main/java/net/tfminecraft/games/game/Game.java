@@ -79,7 +79,7 @@ public interface Game {
     }
 
     default void onSessionStart(Table table) {
-        if (Cache.debug && table != null) {
+        if (Cache.debug) {
             Games.plugin.getLogger().info("[Games] onSessionStart table=" + table.getId());
         }
     }
@@ -98,7 +98,8 @@ public interface Game {
         onTableReady(table);
     }
 
-    default void onChipIn(Table table, Player player) {}
+    /** Every game reacts to chips arriving or a seat leaving, if only to refresh its label. */
+    void onChipIn(Table table, Player player);
 
     default void onChipIn(Table table, Player player, int denars, ItemStack item) {
         onChipIn(table, player);
@@ -126,13 +127,8 @@ public interface Game {
 
     default void onPlayWord(Table table, Player player, String word) {}
 
-    /** After selected cards were returned to the shoe while live. */
-    default void onReturnedSelected(Table table, Player player, int count) {}
-
     /** Extra shoe hologram lines. Empty means none. */
-    default String extraLabel(Table table) {
-        return "";
-    }
+    String extraLabel(Table table);
 
     /** When false, the stock Auto/Dealer hologram line is skipped (game extraLabel owns it). */
     default boolean showStockDealer() {
@@ -145,7 +141,7 @@ public interface Game {
 
     default void onTablePilesChanged(Table table) {}
 
-    default void onFeltPilesChanged(Table table) {}
+    void onFeltPilesChanged(Table table);
 
     /**
      * Idle shoe click. True if the click was consumed (no sandbox draw).

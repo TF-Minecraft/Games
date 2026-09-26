@@ -25,6 +25,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.IntConsumer;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -59,6 +60,7 @@ import org.joml.Vector3f;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 
 import net.tfminecraft.tlibs.TLibs;
 import net.tfminecraft.games.Games;
@@ -74,6 +76,7 @@ import net.tfminecraft.games.gui.GameSelectGui;
 import net.tfminecraft.games.gui.GuiSounds;
 import net.tfminecraft.games.game.Game;
 import net.tfminecraft.games.game.GamesRegistry;
+import net.tfminecraft.games.game.LiveCardReturns;
 import net.tfminecraft.games.guild.GuildTables;
 import net.tfminecraft.games.select.CardSelector;
 import net.tfminecraft.games.layout.HandAnchor;
@@ -128,7 +131,6 @@ public final class TableManager implements Listener, WagerHost {
     private final Set<UUID> revealedCardTokens = new HashSet<>();
     private final Set<UUID> revealBusy = new HashSet<>();
     private final Map<UUID, Integer> revealGen = new HashMap<>();
-    private final Map<UUID, List<UUID>> revealExtras = new HashMap<>();
     private final Map<UUID, Integer> dealGen = new HashMap<>();
     private final Map<UUID, List<UUID>> dealCouriers = new HashMap<>();
     private final Map<UUID, List<Card>> dealPendingCards = new HashMap<>();
@@ -161,9 +163,6 @@ public final class TableManager implements Listener, WagerHost {
 
     @Override
     public void moneyMoved(Table table, Collection<UUID> buckets) {
-        if (table == null) {
-            return;
-        }
         for (UUID owner : buckets) {
             syncBucketChips(table, owner);
         }
@@ -179,9 +178,6 @@ public final class TableManager implements Listener, WagerHost {
 
     public void startClock() {
         stopClock();
-        if (Games.plugin == null) {
-            return;
-        }
         handClock = Bukkit.getScheduler().runTaskTimer(Games.plugin, this::tickHands, 0L, 1L);
     }
 
@@ -201,20 +197,13 @@ public final class TableManager implements Listener, WagerHost {
                 continue;
             }
             for (UUID playerId : new ArrayList<>(hands.keySet())) {
+                // Nothing in this loop removes a hand, so every key still has its list. An empty one
+                // (its first card still landing) shows no dust and lays out no cards.
                 List<HandCard> hand = hands.get(playerId);
-                if (hand == null || hand.isEmpty()) {
-                    continue;
-                }
+                // Hands are only ever made for online players, and quitting returns them.
                 Player player = Bukkit.getPlayer(playerId);
-                if (player == null || !player.isOnline()) {
-                    continue;
-                }
-                List<HandCard> still = table.getHands().get(playerId);
-                if (still == null || still.isEmpty()) {
-                    continue;
-                }
-                if (handTicks % 3 == 0 && anyPublic(still) && showRevealDust(table)) {
-                    spawnRevealDust(player, still);
+                if (handTicks % 3 == 0 && anyPublic(hand) && showRevealDust(table)) {
+                    spawnRevealDust(player, hand);
                 }
                 if (layoutHeld(playerId)) {
                     continue;
@@ -226,21 +215,17 @@ public final class TableManager implements Listener, WagerHost {
 
     private void spawnRevealDust(Player owner, List<HandCard> hand) {
         DisplayManager displays = DisplayManager.get();
-        HandLock lock = handLocks.get(owner.getUniqueId());
-        double yawRad = lock != null ? Math.toRadians(lock.placeYaw()) : Math.toRadians(BodyYaw.of(owner));
+        // Every dealt card is laid out on arrival, which locks the hand, so a lock is always present.
+        double yawRad = Math.toRadians(handLocks.get(owner.getUniqueId()).placeYaw());
         double aheadX = -Math.sin(yawRad) * Cache.handRevealDust;
         double aheadZ = Math.cos(yawRad) * Cache.handRevealDust;
         for (HandCard held : hand) {
             if (!revealedCardTokens.contains(held.tokenId())) {
                 continue;
             }
-            Location at = displays.worldLocation(held.tokenId());
-            if (at == null || at.getWorld() == null || !at.getWorld().equals(owner.getWorld())) {
-                continue;
-            }
-            if (Cache.handRevealDust > 0f) {
-                at.add(aheadX, 0, aheadZ);
-            }
+            // A revealed card is always a spawned display in the table's world, and the owner is
+            // still in that world because tickAway has already returned the hands of anyone who left.
+            Location at = displays.worldLocation(held.tokenId()).add(aheadX, 0, aheadZ);
             Particle.DustOptions dust = new Particle.DustOptions(CardNames.suitDust(held.card()), 0.8f);
             owner.spawnParticle(Particle.DUST, at.getX(), at.getY(), at.getZ(), 1, 0, 0, 0, 0, dust);
         }
@@ -290,18 +275,24 @@ public final class TableManager implements Listener, WagerHost {
                 if (data == null || data.id == null) {
                     continue;
                 }
-                Table table = fromData(data);
+                List<Stake> unowned = new ArrayList<>();
+                Table table = fromData(data, unowned);
                 if (table == null) {
                     continue;
                 }
                 tables.put(table.getId(), table);
-                migrateLegacyPiles(table, data);
-                LedgerAudit.checkLoaded(table, storedDenars(data));
+                migrateLegacyPiles(table, data, unowned);
+                int unownedDenars = unowned.stream().mapToInt(Stake::value).sum();
+                LedgerAudit.checkLoaded(table, storedDenars(data), unownedDenars);
                 try {
                     boolean stale = (data.actives != null && !data.actives.isEmpty())
-                            || !table.ledger().isEmpty();
+                            || !table.ledger().isEmpty() || !unowned.isEmpty();
                     if (stale) {
                         resetTableToIdle(table, table.getOrigin());
+                    }
+                    if (!unowned.isEmpty()) {
+                        Accounts.ground(table, table.getOrigin()).accept(unowned);
+                        MoneyLog.note(table, unownedDenars, "items with unknown owners returned to ground");
                     }
                     spawnWorld(table);
                 } catch (RuntimeException ex) {
@@ -310,7 +301,7 @@ public final class TableManager implements Listener, WagerHost {
                     Games.plugin.getLogger().warning("[Games] Failed to spawn loaded table "
                             + file.getName() + ": " + ex.getMessage());
                 }
-            } catch (IOException ex) {
+            } catch (IOException | JsonParseException ex) {
                 Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex.getMessage());
             }
         }
@@ -330,9 +321,6 @@ public final class TableManager implements Listener, WagerHost {
      * End the session, settle money, muck cards, full idle deck. Table file stays.
      */
     private void resetTableToIdle(Table table, Location dropAt) {
-        if (table == null) {
-            return;
-        }
         cancelVote(table, null);
         cancelLootArmsForTable(table.getId());
         table.bumpRecycleGen();
@@ -345,15 +333,13 @@ public final class TableManager implements Listener, WagerHost {
         for (UUID playerId : new ArrayList<>(table.getHands().keySet())) {
             discardPlayerCards(table, playerId);
         }
-        despawnTablePiles(table, true);
+        despawnTablePiles(table);
         settleAutoTray(table, dropAt);
         clearFeltNow(table, null);
         table.actives().clear();
         table.setDealerId(null);
         table.setStreet(1);
-        if (table.getDeck() != null) {
-            table.getDeck().reshuffleAll();
-        }
+        table.getDeck().reshuffleAll();
         save(table);
     }
 
@@ -394,7 +380,7 @@ public final class TableManager implements Listener, WagerHost {
                 }
             }
             table.getHands().clear();
-            despawnTablePiles(table, true);
+            despawnTablePiles(table);
             save(table);
             try {
                 rebuildCardStacks(table);
@@ -407,12 +393,6 @@ public final class TableManager implements Listener, WagerHost {
         revealedCardTokens.clear();
         revealBusy.clear();
         dealGen.clear();
-        for (List<UUID> extras : revealExtras.values()) {
-            for (UUID extra : extras) {
-                DisplayManager.get().despawn(extra);
-            }
-        }
-        revealExtras.clear();
     }
 
     public boolean tryPlace(Player player, Location at) {
@@ -563,7 +543,7 @@ public final class TableManager implements Listener, WagerHost {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         arms.remove(event.getPlayer().getUniqueId());
-        clearLootArm(event.getPlayer().getUniqueId(), false);
+        clearLootArm(event.getPlayer().getUniqueId());
         onWagerQuit(event.getPlayer());
         leaveIfAtTable(event.getPlayer(), true);
         clearDealer(event.getPlayer());
@@ -582,7 +562,7 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         List<HandCard> hand = table.getHands().get(player.getUniqueId());
-        if (hand == null || hand.isEmpty()) {
+        if (hand.isEmpty()) {
             return;
         }
         event.setCancelled(true);
@@ -623,32 +603,29 @@ public final class TableManager implements Listener, WagerHost {
         }
         if (table.live()) {
             Game game = gameOf(table);
-            if (game != null && allowReturnSelected(table, player)) {
+            if (game == null) {
+                return;
+            }
+            if (game instanceof LiveCardReturns returns && game.allowReturnSelected(table, player)) {
                 int n = countSelected(table, player);
                 if (n > 0 && tryReturnSelected(table, player)) {
-                    game.onReturnedSelected(table, player, n);
+                    returns.onReturnedSelected(table, player, n);
                     return;
                 }
             }
-            if (game != null) {
-                game.onShoeClick(table, player);
-            }
+            game.onShoeClick(table, player);
             return;
         }
         Game idleGame = gameOf(table);
         if (idleGame != null && idleGame.tryClaimDealer(table, player)) {
             return;
         }
-        if (!allowReturnSelected(table, player) && !allowFreeDraw(table, player)) {
-            return;
-        }
         if (allowReturnSelected(table, player) && tryReturnSelected(table, player)) {
             return;
         }
-        if (!allowFreeDraw(table, player)) {
-            return;
+        if (allowFreeDraw(table, player)) {
+            tryDraw(player, table);
         }
-        tryDraw(player, table);
     }
 
     // Retain Bukkit chat-event ordering and String message semantics for existing integrations.
@@ -687,7 +664,7 @@ public final class TableManager implements Listener, WagerHost {
         int cz = event.getChunk().getZ();
         for (Table table : tables.values()) {
             Location origin = table.getOrigin();
-            if (origin.getWorld() == null || !origin.getWorld().equals(world)) {
+            if (!origin.getWorld().equals(world)) {
                 continue;
             }
             if ((origin.getBlockX() >> 4) != cx || (origin.getBlockZ() >> 4) != cz) {
@@ -720,7 +697,7 @@ public final class TableManager implements Listener, WagerHost {
         tables.remove(table.getId());
         deleteFile(table.getId());
         ItemStack deckItem = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getDeckItem());
-        if (deckItem != null && dropAt.getWorld() != null) {
+        if (deckItem != null) {
             dropAt.getWorld().dropItemNaturally(dropAt, deckItem);
         }
         player.sendMessage(Messages.get("place.picked_up"));
@@ -728,10 +705,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void spawnWorld(Table table) {
-        Location origin = table.getOrigin();
-        if (origin.getWorld() == null) {
-            return;
-        }
         rebuildCardStacks(table);
         rebuildTablePiles(table);
         syncAllChips(table);
@@ -744,9 +717,6 @@ public final class TableManager implements Listener, WagerHost {
 
     private void ensureAnchors(Table table) {
         Location origin = table.getOrigin();
-        if (origin.getWorld() == null) {
-            return;
-        }
         Entity interaction = table.getInteractionId() != null ? Bukkit.getEntity(table.getInteractionId()) : null;
         if (interaction == null || interaction.isDead()) {
             var spawned = WorldAnchors.spawnInteraction(
@@ -763,9 +733,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void refreshLabel(Table table) {
-        if (table == null) {
-            return;
-        }
         if (table.getLabelId() == null) {
             ensureAnchors(table);
             return;
@@ -797,7 +764,8 @@ public final class TableManager implements Listener, WagerHost {
         }
         if (table.minBet() > 0 || table.maxBet() > 0) {
             String min = table.minBet() > 0 ? String.valueOf(table.minBet()) : "-";
-            String max = table.maxBet() > 0 ? String.valueOf(table.maxBet()) : "-";
+            // Table keeps the maximum at least 1 and never below the minimum, so it is always set here.
+            String max = String.valueOf(table.maxBet());
             text.append("\n").append(Messages.get("label.limits", "min", min, "max", max));
         }
         if (table.betOpen()) {
@@ -840,10 +808,6 @@ public final class TableManager implements Listener, WagerHost {
     void rebuildCardStacks(Table table) {
         rebuildShoeStack(table);
         rebuildDiscardStack(table);
-    }
-
-    void rebuildStack(Table table) {
-        rebuildCardStacks(table);
     }
 
     private void rebuildShoeStack(Table table) {
@@ -898,9 +862,6 @@ public final class TableManager implements Listener, WagerHost {
         Location origin = table.getOrigin();
         for (Map.Entry<String, List<HandCard>> entry : table.tablePiles().entrySet()) {
             List<HandCard> pile = entry.getValue();
-            if (pile == null || pile.isEmpty()) {
-                continue;
-            }
             int n = pile.size();
             for (int i = 0; i < n; i++) {
                 HandCard held = pile.get(i);
@@ -939,18 +900,14 @@ public final class TableManager implements Listener, WagerHost {
         notifyTablePiles(table);
     }
 
-    private void despawnTablePiles(Table table, boolean discardCards) {
+    /** Clear every public pile and put its cards on the discard. */
+    private void despawnTablePiles(Table table) {
         table.bumpTableDealGen();
         DisplayManager displays = DisplayManager.get();
         for (List<HandCard> pile : table.tablePiles().values()) {
-            if (pile == null) {
-                continue;
-            }
             for (HandCard held : pile) {
                 displays.despawn(held.tokenId());
-                if (discardCards) {
-                    table.getDeck().discard(held.card());
-                }
+                table.getDeck().discard(held.card());
             }
         }
         table.tablePiles().clear();
@@ -958,7 +915,7 @@ public final class TableManager implements Listener, WagerHost {
         notifyTablePiles(table);
     }
 
-    private boolean drawOneToTable(Table table, String pile, boolean faceUp, Runnable after) {
+    private boolean drawOneToTable(Table table, String pile, boolean faceUp, Runnable after, Runnable onFailure) {
         ItemStack back = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getBackItem());
         if (back == null) {
             return false;
@@ -970,24 +927,22 @@ public final class TableManager implements Listener, WagerHost {
             if (table.isRecycling()) {
                 return false;
             }
-            UUID tableId = table.getId();
             int gen = table.tableDealGen();
+            // recycleIfNeeded runs this straight away or from finishRecycle, on this same table.
             recycleIfNeeded(table, () -> {
-                Table live = tables.get(tableId);
-                if (live == null || live.tableDealGen() != gen) {
-                    tableDealing.remove(tableId);
+                if (table.tableDealGen() != gen) {
+                    tableDealing.remove(table.getId());
                     return;
                 }
-                drawOneToTable(live, pile, faceUp, after);
+                // A round-shuffled blackjack shoe is not refilled mid-round, so trying again would loop.
+                if (table.getDeck().remaining() == 0 || !drawOneToTable(table, pile, faceUp, after, onFailure)) {
+                    onFailure.run();
+                }
             });
             return true;
         }
         int dealGen = table.tableDealGen();
-        Optional<Card> drawn = table.getDeck().draw();
-        if (drawn.isEmpty()) {
-            return false;
-        }
-        Card card = drawn.get();
+        Card card = table.getDeck().draw().orElseThrow();
         ItemStack face = TLibs.getItemAPI().getCreator().getItemFromPath(card.getItem());
         List<HandCard> cards = table.tablePile(pile);
         int destIndex = cards.size();
@@ -997,14 +952,8 @@ public final class TableManager implements Listener, WagerHost {
         DisplayPose end = pileSlot(table, pile, destIndex, destCount, faceUp);
         ItemStack show = faceUp && face != null ? face : back;
         if (Cache.handDealTicks <= 0) {
-            if (table.tableDealGen() != dealGen) {
-                table.getDeck().discard(card);
-                rebuildCardStacks(table);
-                save(table);
-                return false;
-            }
             UUID tokenId = UUID.randomUUID();
-            if (show == null || !DisplayManager.get().spawn(tokenId, table.getOrigin(), show, end)) {
+            if (!DisplayManager.get().spawn(tokenId, table.getOrigin(), show, end)) {
                 table.getDeck().discard(card);
                 rebuildCardStacks(table);
                 save(table);
@@ -1015,9 +964,7 @@ public final class TableManager implements Listener, WagerHost {
             layoutTablePile(table, pile, 0);
             save(table);
             playCardSound(table.getOrigin());
-            if (after != null) {
-                Bukkit.getScheduler().runTaskLater(Games.plugin, after, 1L);
-            }
+            Bukkit.getScheduler().runTaskLater(Games.plugin, after, 1L);
             return true;
         }
         float stackTopY = stackTopOffset(StackLayout.visibleLayers(table.getDeck().remaining(),
@@ -1025,7 +972,7 @@ public final class TableManager implements Listener, WagerHost {
         Location courierOrigin = table.getOrigin().clone().add(0, stackTopY, 0);
         DisplayPose start = DisplayPose.flatOnTable(Cache.cardScale, 0f, table.getYaw());
         UUID courierId = UUID.randomUUID();
-        if (!DisplayManager.get().spawn(courierId, courierOrigin, show != null ? show : back, start)) {
+        if (!DisplayManager.get().spawn(courierId, courierOrigin, show, start)) {
             table.getDeck().discard(card);
             rebuildCardStacks(table);
             save(table);
@@ -1034,13 +981,10 @@ public final class TableManager implements Listener, WagerHost {
         playCardSound(table.getOrigin());
         DisplayPose endFromShoe = poseOnStackOrigin(end, stackTopY);
         UUID tableId = table.getId();
+        // flyTableCourier only arrives while the table is still placed.
         flyTableCourier(tableId, courierId, start, endFromShoe, () -> {
             Table still = tables.get(tableId);
             DisplayManager.get().despawn(courierId);
-            if (still == null) {
-                tableDealing.remove(tableId);
-                return;
-            }
             if (still.tableDealGen() != dealGen) {
                 still.getDeck().discard(card);
                 tableDealing.remove(tableId);
@@ -1049,18 +993,17 @@ public final class TableManager implements Listener, WagerHost {
                 return;
             }
             UUID tokenId = UUID.randomUUID();
-            if (show == null || !DisplayManager.get().spawn(tokenId, still.getOrigin(), show, end)) {
+            if (!DisplayManager.get().spawn(tokenId, still.getOrigin(), show, end)) {
                 still.getDeck().discard(card);
                 rebuildCardStacks(still);
                 save(still);
+                onFailure.run();
                 return;
             }
             still.tablePile(pile).add(new HandCard(card, tokenId, faceUp));
             layoutTablePile(still, pile, 0);
             save(still);
-            if (after != null) {
-                after.run();
-            }
+            after.run();
         });
         return true;
     }
@@ -1104,42 +1047,31 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void reshuffleFull(Table table) {
-        if (table == null || table.getDeck() == null) {
-            return;
-        }
         table.getDeck().reshuffleAll();
         rebuildCardStacks(table);
         save(table);
     }
 
     private void recycleIfNeeded(Table table, Runnable after) {
-        if (table == null) {
-            return;
-        }
         boolean blackjack = "blackjack".equalsIgnoreCase(table.getGameId());
         if (blackjack && table.shufflePolicy() == ShufflePolicy.ROUND) {
-            if (after != null) {
-                after.run();
-            }
+            runPending(after);
             return;
         }
         boolean emptyShoe = table.getDeck().remaining() == 0;
         boolean idle = table.getHands().isEmpty() && table.tablePilesEmpty();
         boolean should = table.getDeck().discarded() > 0 && emptyShoe;
-        if (blackjack && table.shufflePolicy() == ShufflePolicy.SHOE) {
+        // ROUND returned above, and a policy is always SHOE or ROUND, so this is the SHOE case.
+        if (blackjack) {
             if (!should) {
-                if (after != null) {
-                    after.run();
-                }
+                runPending(after);
                 return;
             }
             startRecycle(table, after);
             return;
         }
         if (table.getDeck().discarded() == 0 || (!emptyShoe && !idle)) {
-            if (after != null) {
-                after.run();
-            }
+            runPending(after);
             return;
         }
         startRecycle(table, after);
@@ -1155,7 +1087,7 @@ public final class TableManager implements Listener, WagerHost {
         int ticks = Cache.tableRecycleTicks;
         List<UUID> tokens = new ArrayList<>(table.getDiscardTokens());
         if (ticks <= 0 || tokens.isEmpty()) {
-            finishRecycle(table, gen, after);
+            finishRecycle(table, after);
             return;
         }
         Location shoe = table.getOrigin();
@@ -1189,33 +1121,27 @@ public final class TableManager implements Listener, WagerHost {
                     }
                     if (s == ticks) {
                         displays.setTransform(last, pose, 1);
-                        finishRecycle(live, gen, after);
+                        finishRecycle(live, after);
                     }
                 }, s);
             }
         }, 1L);
     }
 
-    private void finishRecycle(Table table, int gen, Runnable after) {
-        if (table == null || table.recycleGen() != gen) {
-            return;
-        }
+    private void finishRecycle(Table table, Runnable after) {
         table.setRecycling(false);
         table.getDeck().recycle();
         rebuildCardStacks(table);
         save(table);
-        if (after != null) {
-            after.run();
-        }
+        runPending(after);
     }
 
     private void despawnWorld(Table table) {
         table.bumpRecycleGen();
         table.setRecycling(false);
         despawnHands(table);
-        despawnTablePiles(table, true);
+        despawnTablePiles(table);
         despawnPiles(table);
-        clearBucketLabels(table);
         for (UUID token : table.getStackTokens()) {
             DisplayManager.get().despawn(token);
         }
@@ -1250,7 +1176,7 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         ItemStack held = player.getInventory().getItemInMainHand();
-        if (held == null || held.getType() == org.bukkit.Material.AIR || held.getAmount() <= 0) {
+        if (held.isEmpty()) {
             player.sendMessage(Messages.get("wager.need_item"));
             return;
         }
@@ -1298,11 +1224,10 @@ public final class TableManager implements Listener, WagerHost {
         Game game = GamesRegistry.of(table.getGameId());
         int need = game != null ? Math.max(0, game.denarsToMatch(table, player)) : 0;
         if (value < need) {
+            // need is only above zero when a game asked for it, so game is set here.
             refundStreet(table, player, street);
             save(table);
-            if (game != null) {
-                game.onStreetCommit(table, player, value, true);
-            }
+            game.onStreetCommit(table, player, value, true);
             player.sendMessage(Messages.get("wager.folded"));
             return;
         }
@@ -1324,9 +1249,6 @@ public final class TableManager implements Listener, WagerHost {
         Table felt = tableNear(player);
         if (felt != null) {
             return felt;
-        }
-        if (player == null || player.getWorld() == null) {
-            return null;
         }
         Location loc = player.getLocation();
         Table best = null;
@@ -1353,18 +1275,12 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public boolean hasNonDealerOwnedPile(Table table) {
-        if (table == null) {
-            return false;
-        }
         return !boxOwners(table).isEmpty();
     }
 
     /** Everyone with money on the felt: not the tray, not the dealer's own chips. */
     public List<UUID> boxOwners(Table table) {
         List<UUID> out = new ArrayList<>();
-        if (table == null) {
-            return out;
-        }
         UUID dealer = table.dealerId();
         UUID house = table.getId();
         for (UUID owner : table.ledger().owners()) {
@@ -1378,9 +1294,6 @@ public final class TableManager implements Listener, WagerHost {
 
     /** True if a player box (non-tray) has at least minBet on the felt. */
     public boolean hasLegalBlackjackBox(Table table) {
-        if (table == null) {
-            return false;
-        }
         int min = table.minBet();
         for (UUID owner : boxOwners(table)) {
             if (table.ledger().total(owner) >= min) {
@@ -1391,9 +1304,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public int ownedDenars(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return 0;
-        }
         return table.ledger().total(owner);
     }
 
@@ -1402,9 +1312,6 @@ public final class TableManager implements Listener, WagerHost {
      * so it survives a payout that leaves them with nothing on the felt.
      */
     public Location boxLocation(Table table, UUID owner) {
-        if (table == null) {
-            return null;
-        }
         TableLayout layout = Cache.layoutOf(table.getGameId());
         Location fallback = layout != null ? layout.feltCenter(table) : table.getOrigin().clone();
         if (owner == null) {
@@ -1421,7 +1328,7 @@ public final class TableManager implements Listener, WagerHost {
             return at;
         }
         Player online = Bukkit.getPlayer(owner);
-        if (online != null && online.isOnline()) {
+        if (online != null) {
             Location pad = betPadCenter(table, online);
             if (pad != null) {
                 return pad;
@@ -1439,17 +1346,11 @@ public final class TableManager implements Listener, WagerHost {
      * it clears what is there and lays the stakes out again.
      */
     public void syncBucketChips(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return;
-        }
         clearBucketChips(table, owner);
         if (!Cache.wagerShowChips) {
             return;
         }
         Location anchor = boxLocation(table, owner);
-        if (anchor == null) {
-            return;
-        }
         boolean tray = owner.equals(table.getId());
         int slot = 0;
         for (Stake stake : table.ledger().stakes(owner)) {
@@ -1470,9 +1371,6 @@ public final class TableManager implements Listener, WagerHost {
                 } else {
                     at = tray ? nextTraySlot(table) : spreadSlot(table, anchor, slot++);
                 }
-                if (at == null) {
-                    return;
-                }
                 PotPile pile = new PotPile(owner, one.clone(), stake.typeKey(), stake.unit(),
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
@@ -1489,9 +1387,6 @@ public final class TableManager implements Listener, WagerHost {
 
     /** Redraw every bucket, for load, chunk load, and the show-chips toggle. */
     public void syncAllChips(Table table) {
-        if (table == null) {
-            return;
-        }
         for (PotPile pile : new ArrayList<>(table.getPiles())) {
             despawnPile(pile);
         }
@@ -1515,7 +1410,7 @@ public final class TableManager implements Listener, WagerHost {
      * Bounds were checked when it was placed, so this is taken at face value.
      */
     private static Location stakeSpot(Table table, Stake stake) {
-        if (stake == null || !stake.placed() || table.getOrigin().getWorld() == null) {
+        if (!stake.placed()) {
             return null;
         }
         Location at = table.getOrigin().clone();
@@ -1561,7 +1456,7 @@ public final class TableManager implements Listener, WagerHost {
         }
         for (int i = 0; i < 80; i++) {
             Location slot = trayGridAt(table, layout, tray, i);
-            if (slot == null || !inTrayZone(table, slot)) {
+            if (!inTrayZone(table, slot)) {
                 continue;
             }
             if (!traySlotTaken(table, slot)) {
@@ -1576,9 +1471,6 @@ public final class TableManager implements Listener, WagerHost {
             return tray.clone();
         }
         TableLayout.PileSlot origin = layout.pile("tray");
-        if (origin == null) {
-            return tray.clone();
-        }
         double step = Math.max(0.12, Cache.wagerMergeRange);
         int[] walk = spiralStep(index);
         return TableLayout.fromLocal(table, origin.forward() + walk[1] * step, origin.right() + walk[0] * step);
@@ -1601,9 +1493,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public ItemStack feltItem(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return null;
-        }
         ItemStack template = table.ledger().template(owner);
         if (template == null) {
             return null;
@@ -1628,21 +1517,21 @@ public final class TableManager implements Listener, WagerHost {
 
     /** The house tray is just another bucket, keyed by the table itself. */
     public UUID trayOwner(Table table) {
-        return table != null ? table.getId() : null;
+        return table.getId();
     }
 
     /** Money sitting in the tray. */
     public int trayDenars(Table table) {
-        return table == null ? 0 : table.ledger().total(table.getId());
+        return table.ledger().total(table.getId());
     }
 
     /** Bank the auto tray without picking the table up. Used when a human takes the shoe. */
     public void bankAutoTray(Table table) {
-        settleAutoTray(table, table != null ? table.getOrigin() : null);
+        settleAutoTray(table, table.getOrigin());
     }
 
     public void beginSession(Table table) {
-        if (table == null || table.live()) {
+        if (table.live()) {
             return;
         }
         if (!GuildTables.canStartGuildAutoRound(table)) {
@@ -1656,7 +1545,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void tryBeginSession(Table table) {
-        if (table == null || table.live()) {
+        if (table.live()) {
             return;
         }
         Game game = gameOf(table);
@@ -1665,10 +1554,6 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         beginSession(table);
-    }
-
-    private static void notifyChipIn(Table table, Player player) {
-        notifyChipIn(table, player, 0, null);
     }
 
     private static void notifyChipIn(Table table, Player player, int denars, ItemStack item) {
@@ -1687,13 +1572,13 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void dealToPlayer(Table table, Player player, int n, int slot, Runnable after) {
-        if (table == null || player == null || n < 1) {
-            if (after != null) {
-                after.run();
-            }
-            return;
-        }
-        dealRemaining(table, player, n, Math.max(0, slot), after);
+        Runnable done = orNothing(after);
+        dealRemaining(table, player, n, Math.max(0, slot), done, done);
+    }
+
+    /** Commands deal without a follow-up, so the deal chains always get something to run. */
+    private static Runnable orNothing(Runnable after) {
+        return after != null ? after : () -> { };
     }
 
     public void dealToTable(Table table, String name, int n, boolean faceUp) {
@@ -1701,33 +1586,25 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void dealToTable(Table table, String name, int n, boolean faceUp, Runnable after) {
-        if (table == null || name == null || name.isBlank() || n < 1) {
-            if (after != null) {
-                after.run();
-            }
-            return;
-        }
         String pile = name.toLowerCase(java.util.Locale.ROOT);
+        Runnable done = orNothing(after);
         UUID tableId = table.getId();
         int gen = table.tableDealGen();
         if (tableDealing.contains(tableId)) {
             Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
                 Table still = tables.get(tableId);
                 if (still != null && still.tableDealGen() == gen) {
-                    dealToTable(still, pile, n, faceUp, after);
-                } else if (after != null) {
-                    after.run();
+                    dealToTable(still, pile, n, faceUp, done);
+                } else {
+                    done.run();
                 }
             }, 2L);
             return;
         }
-        dealTableRemaining(table, pile, n, faceUp, gen, after);
+        dealTableRemaining(table, pile, n, faceUp, gen, done);
     }
 
     public void revealTablePile(Table table, String name) {
-        if (table == null || name == null || name.isBlank()) {
-            return;
-        }
         String pile = name.toLowerCase(java.util.Locale.ROOT);
         List<HandCard> cards = table.tablePiles().get(pile);
         if (cards == null) {
@@ -1740,110 +1617,42 @@ public final class TableManager implements Listener, WagerHost {
         notifyTablePiles(table);
     }
 
+    /** Callers hand over a live table whose deal generation is still {@code gen}. */
     private void dealTableRemaining(Table table, String pile, int left, boolean faceUp, int gen, Runnable after) {
-        if (table == null || table.tableDealGen() != gen) {
-            if (table != null) {
-                tableDealing.remove(table.getId());
-            }
-            if (after != null) {
-                after.run();
-            }
-            return;
-        }
         UUID tableId = table.getId();
         if (left < 1) {
             tableDealing.remove(tableId);
-            if (after != null) {
-                after.run();
-            }
+            after.run();
             return;
         }
         tableDealing.add(tableId);
+        Runnable onFailure = () -> {
+            tableDealing.remove(tableId);
+            after.run();
+        };
         boolean started = drawOneToTable(table, pile, faceUp, () -> {
             Table still = tables.get(tableId);
             if (still != null && still.tableDealGen() == gen) {
                 dealTableRemaining(still, pile, left - 1, faceUp, gen, after);
             } else {
-                tableDealing.remove(tableId);
-                if (after != null) {
-                    after.run();
-                }
+                onFailure.run();
             }
-        });
+        }, onFailure);
         if (!started) {
-            tableDealing.remove(tableId);
-            if (after != null) {
-                after.run();
-            }
+            onFailure.run();
         }
-    }
-
-    public boolean moveHandCardToTablePile(Table table, Player player, int cardIndex, String pileName, boolean faceUp) {
-        if (table == null || player == null || pileName == null || pileName.isBlank()) {
-            return false;
-        }
-        List<HandCard> hand = table.getHands().get(player.getUniqueId());
-        if (hand == null || cardIndex < 0 || cardIndex >= hand.size()) {
-            return false;
-        }
-        HandCard held = hand.remove(cardIndex);
-        held.setSelected(false);
-        held.setFaceUp(faceUp);
-        String pile = pileName.toLowerCase(java.util.Locale.ROOT);
-        table.tablePile(pile).add(held);
-        DisplayManager displays = DisplayManager.get();
-        displays.setLayoutOwner(held.tokenId(), null);
-        displays.clearItemFor(held.tokenId(), player);
-        ItemStack back = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getBackItem());
-        ItemStack face = TLibs.getItemAPI().getCreator().getItemFromPath(held.card().getItem());
-        ItemStack show = faceUp && face != null ? face : back;
-        if (show != null) {
-            displays.setItem(held.tokenId(), show);
-        }
-        layoutTablePile(table, pile, Cache.interpolationTicks);
-        layoutHand(table, player, Cache.interpolationTicks, true, null);
-        save(table);
-        return true;
-    }
-
-    public boolean moveTablePileCard(Table table, String fromName, int cardIndex, String toName, boolean faceUp) {
-        if (table == null || fromName == null || fromName.isBlank() || toName == null || toName.isBlank()) {
-            return false;
-        }
-        String fromPile = fromName.toLowerCase(java.util.Locale.ROOT);
-        String toPile = toName.toLowerCase(java.util.Locale.ROOT);
-        List<HandCard> from = table.tablePiles().get(fromPile);
-        if (from == null || cardIndex < 0 || cardIndex >= from.size()) {
-            return false;
-        }
-        HandCard held = from.remove(cardIndex);
-        held.setSelected(false);
-        held.setFaceUp(faceUp);
-        table.tablePile(toPile).add(held);
-        DisplayManager displays = DisplayManager.get();
-        displays.setLayoutOwner(held.tokenId(), null);
-        ItemStack back = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getBackItem());
-        ItemStack face = TLibs.getItemAPI().getCreator().getItemFromPath(held.card().getItem());
-        ItemStack show = faceUp && face != null ? face : back;
-        if (show != null) {
-            displays.setItem(held.tokenId(), show);
-        }
-        layoutTablePile(table, fromPile, Cache.interpolationTicks);
-        layoutTablePile(table, toPile, Cache.interpolationTicks);
-        save(table);
-        notifyTablePiles(table);
-        return true;
     }
 
     public void relayoutHand(Table table, Player player) {
-        if (table == null || player == null) {
-            return;
-        }
         layoutHand(table, player, Cache.interpolationTicks, true, null);
     }
 
+    /**
+     * Turns a hand face up for everyone. A player whose hand was returned while their card was
+     * still landing has nothing here to show, and must not be given an empty hand to hold.
+     */
     public void publishHand(Table table, Player player) {
-        if (table == null || player == null) {
+        if (!table.getHands().containsKey(player.getUniqueId())) {
             return;
         }
         DisplayManager displays = DisplayManager.get();
@@ -1861,16 +1670,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void muckPlayer(Table table, Player player) {
-        if (table == null || player == null) {
-            return;
-        }
         muckPlayer(table, player.getUniqueId());
     }
 
     public void muckPlayer(Table table, UUID playerId) {
-        if (table == null || playerId == null) {
-            return;
-        }
         discardPlayerCards(table, playerId);
         rebuildCardStacks(table);
         save(table);
@@ -1878,9 +1681,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void muckTable(Table table, String name) {
-        if (table == null || name == null || name.isBlank()) {
-            return;
-        }
         String pile = name.toLowerCase(java.util.Locale.ROOT);
         List<HandCard> cards = table.tablePiles().get(pile);
         table.bumpTableDealGen();
@@ -1900,12 +1700,9 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void endSession(Table table) {
-        if (table == null) {
-            return;
-        }
         table.clearSession();
         checkFeltEmpty(table, "session end");
-        despawnTablePiles(table, true);
+        despawnTablePiles(table);
         rebuildCardStacks(table);
         save(table);
         recycleIfNeeded(table, null);
@@ -1915,11 +1712,15 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
-    private void dealRemaining(Table table, Player player, int left, int slot, Runnable after) {
-        if (left < 1 || table == null || player == null || !player.isOnline()) {
-            if (after != null) {
-                after.run();
-            }
+    /**
+     * Deals {@code left} more cards, then runs {@code after}. A card stopped in the air (the hand
+     * was mucked, returned or wiped) ends the deal there and runs {@code stopped}, the whole deal's
+     * follow-up, so a game waiting on the deal carries on instead of waiting forever.
+     */
+    private void dealRemaining(Table table, Player player, int left, int slot, Runnable after, Runnable stopped) {
+        // Games queue Player objects before dealing, so someone may have logged off by their turn.
+        if (left < 1 || !player.isOnline()) {
+            after.run();
             return;
         }
         UUID tableId = table.getId();
@@ -1929,8 +1730,8 @@ public final class TableManager implements Listener, WagerHost {
                 Table still = tables.get(tableId);
                 Player online = Bukkit.getPlayer(playerId);
                 if (still != null && online != null) {
-                    dealRemaining(still, online, left, slot, after);
-                } else if (after != null) {
+                    dealRemaining(still, online, left, slot, after, stopped);
+                } else {
                     after.run();
                 }
             }, 1L);
@@ -1940,20 +1741,17 @@ public final class TableManager implements Listener, WagerHost {
             Table still = tables.get(tableId);
             Player online = Bukkit.getPlayer(playerId);
             if (still != null && online != null) {
-                dealRemaining(still, online, left - 1, slot, after);
-            } else if (after != null) {
+                dealRemaining(still, online, left - 1, slot, after, stopped);
+            } else {
                 after.run();
             }
-        });
-        if (!started && after != null) {
+        }, stopped);
+        if (!started) {
             after.run();
         }
     }
 
     public boolean canEditHouse(Player player, Table table) {
-        if (player == null || table == null) {
-            return false;
-        }
         if (player.hasPermission(TableHouse.STAFF_PERM) || player.hasPermission("games.admin")) {
             return true;
         }
@@ -1979,9 +1777,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void persistHouseChange(Table table) {
-        if (table == null) {
-            return;
-        }
         save(table);
         refreshLabel(table);
         Game game = gameOf(table);
@@ -1992,9 +1787,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void applyHouse(Table table, TableHouse house) {
-        if (table == null || house == null) {
-            return;
-        }
         String wasGuild = table.ownerGuildId();
         house.apply(table);
         if (!Objects.equals(wasGuild, table.ownerGuildId())) {
@@ -2006,9 +1798,6 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private boolean tryOpenHouseOptions(Table table, Player player) {
-        if (table == null || player == null) {
-            return false;
-        }
         String gameId = table.getGameId();
         boolean blackjack = "blackjack".equalsIgnoreCase(gameId);
         boolean poker = "poker".equalsIgnoreCase(gameId);
@@ -2105,9 +1894,6 @@ public final class TableManager implements Listener, WagerHost {
      * amount at its anchor instead. With chips on, the stacks speak for themselves.
      */
     private void syncBucketLabels(Table table) {
-        if (table == null) {
-            return;
-        }
         Map<UUID, UUID> labels = bucketLabels.computeIfAbsent(table.getId(), id -> new LinkedHashMap<>());
         if (Cache.wagerShowChips) {
             for (UUID label : labels.values()) {
@@ -2118,21 +1904,16 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         Set<UUID> keep = new HashSet<>();
+        // Owners are only listed while their bucket holds money, and every box sits on the table.
         for (UUID owner : table.ledger().owners()) {
             int value = table.ledger().total(owner);
-            if (value < 1) {
-                continue;
-            }
             Location at = boxLocation(table, owner);
-            if (at == null || at.getWorld() == null) {
-                continue;
-            }
             keep.add(owner);
             String text = Messages.get("label.stake", "n", String.valueOf(value));
             Location above = at.clone().add(0, 0.3, 0);
             UUID id = labels.get(owner);
             Entity entity = id != null ? Bukkit.getEntity(id) : null;
-            if (entity == null || entity.isDead() || !(entity instanceof TextDisplay)) {
+            if (!(entity instanceof TextDisplay) || entity.isDead()) {
                 WorldAnchors.remove(id);
                 TextDisplay spawned = WorldAnchors.spawnLabel(above, text);
                 if (spawned != null) {
@@ -2155,27 +1936,11 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
-    /** Drop every amount label for a table, for pickup and shutdown. */
-    private void clearBucketLabels(Table table) {
-        if (table == null) {
-            return;
-        }
-        Map<UUID, UUID> labels = bucketLabels.remove(table.getId());
-        if (labels != null) {
-            for (UUID label : labels.values()) {
-                WorldAnchors.remove(label);
-            }
-        }
-    }
-
     private static Game gameOf(Table table) {
-        return table == null ? null : GamesRegistry.of(table.getGameId());
+        return GamesRegistry.of(table.getGameId());
     }
 
     private static String playWord(String message) {
-        if (message == null) {
-            return null;
-        }
         String raw = message.strip();
         if (raw.endsWith(".") || raw.endsWith("!")) {
             raw = raw.substring(0, raw.length() - 1).strip();
@@ -2193,26 +1958,20 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private boolean isPlayActor(Player player) {
-        if (player == null) {
-            return false;
-        }
         Table table = tableNearby(player);
         if (table == null || !table.live() || !player.getUniqueId().equals(table.actor())) {
             return false;
         }
-        Game game = gameOf(table);
-        return game != null && game.allowPlayChat(table, player);
+        // Only a registered game ever names an actor, so an acting table always has one.
+        return gameOf(table).allowPlayChat(table, player);
     }
 
     public void applyPlayCall(Player player, String action) {
-        if (player == null || action == null || !isPlayActor(player)) {
+        if (!isPlayActor(player)) {
             return;
         }
         Table table = tableNearby(player);
         Game game = gameOf(table);
-        if (game == null) {
-            return;
-        }
         switch (action) {
             case "hit" -> game.onBetHit(table, player);
             case "stand" -> game.onBetStand(table, player);
@@ -2227,14 +1986,16 @@ public final class TableManager implements Listener, WagerHost {
         return game != null ? game.allowManualPotFlush(table, player) : !table.live();
     }
 
+    /** Only asked of idle tables, where a table without a game is plain free play. */
     private static boolean allowFreeDraw(Table table, Player player) {
         Game game = gameOf(table);
-        return game != null ? game.allowFreeDraw(table, player) : !table.live();
+        return game == null || game.allowFreeDraw(table, player);
     }
 
+    /** Only asked of idle tables, or of live ones that have a game. */
     private static boolean allowReturnSelected(Table table, Player player) {
         Game game = gameOf(table);
-        return game != null ? game.allowReturnSelected(table, player) : !table.live();
+        return game == null || game.allowReturnSelected(table, player);
     }
 
     private static boolean allowRevealToggle(Table table, Player player) {
@@ -2248,15 +2009,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void payout(Table table, Player winner) {
-        if (table == null) {
-            return;
-        }
         cancelVote(table, "wager.cancelled");
         cancelLootArmsForTable(table.getId());
         if (table.isPaying()) {
-            if (winner != null && winner.isOnline()) {
-                winner.sendMessage(Messages.get("wager.paying"));
-            }
+            winner.sendMessage(Messages.get("wager.paying"));
             return;
         }
         if (table.ledger().isEmpty()) {
@@ -2269,9 +2025,6 @@ public final class TableManager implements Listener, WagerHost {
 
     /** Every bucket goes to one winner. Manual flush and the admin pay command. */
     public void payoutAll(Table table, Player winner) {
-        if (table == null) {
-            return;
-        }
         List<PayoutFlight> flights = new ArrayList<>();
         MoneyTx tx = wager().begin(table, "pot paid out").animate(flights);
         for (UUID owner : wager().owners(table)) {
@@ -2279,12 +2032,13 @@ public final class TableManager implements Listener, WagerHost {
         }
         tx.commit();
         flushPiles(table, flights, null);
+        if (flights.isEmpty()) {
+            // No chips to fly, so no wave lands to announce the winner. Say it now instead.
+            winner.sendMessage(Messages.get("wager.paid", "player", winner.getName()));
+        }
     }
 
     public void refundOwnedPiles(Table table, Player player) {
-        if (table == null || player == null) {
-            return;
-        }
         List<PayoutFlight> flights = new ArrayList<>();
         UUID owner = player.getUniqueId();
         wager().begin(table, "refund").animate(flights)
@@ -2295,21 +2049,11 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     /**
-     * Take money out of a bucket and hand it over as items, with a throwaway chip stack
-     * flying to the destination. Pass {@code denars <= 0} to empty the bucket.
-     * Returns the denars actually paid, which is always a whole number of coins.
-     */
-    /** Every bucket except the house tray. In poker this is the pot. */
-    public List<UUID> potOwners(Table table) {
-        return wager().potOwners(table);
-    }
-
-    /**
      * Nothing should be left on the felt once a hand is over. Logs loudly if it is, which is
      * the alarm for money that failed to move.
      */
     public void checkFeltEmpty(Table table, String stage) {
-        if (table == null || !Cache.wagerAuditLog) {
+        if (!Cache.wagerAuditLog) {
             return;
         }
         int left = table.ledger().totalExcept(table.getId());
@@ -2326,19 +2070,17 @@ public final class TableManager implements Listener, WagerHost {
 
     /**
      * Chips drawn only to be animated. They are not part of any bucket and hold no value,
-     * so the flight can throw them away when it lands.
+     * so the flight can throw them away when it lands. Every stake handed over here holds at
+     * least one real coin, since withdrawals never yield empty parts.
      */
     private List<PayoutFlight> makeFlights(Table table, List<Stake> stakes, Location from, UUID destId,
             boolean toTray) {
         List<PayoutFlight> flights = new ArrayList<>();
-        if (!Cache.wagerShowChips || from == null || stakes == null) {
+        if (!Cache.wagerShowChips) {
             return flights;
         }
         int slot = 0;
         for (Stake stake : stakes) {
-            if (stake.count() < 1 || stake.item() == null) {
-                continue;
-            }
             ItemStack one = stake.item().clone();
             one.setAmount(1);
             WagerPileStyle style = ChipItems.pileStyle(one);
@@ -2368,16 +2110,14 @@ public final class TableManager implements Listener, WagerHost {
         return flights;
     }
 
+    /**
+     * Animate a wave of chips that {@link #makeFlights} drew for money that already moved. Those
+     * stacks are throwaway copies, never part of the table's own piles.
+     */
     public void flushPiles(Table table, List<PayoutFlight> assignments, Runnable onDone) {
-        if (table == null) {
-            if (onDone != null) {
-                onDone.run();
-            }
-            return;
-        }
         cancelVote(table, "wager.cancelled");
         cancelLootArmsForTable(table.getId());
-        if (assignments == null || assignments.isEmpty()) {
+        if (assignments.isEmpty()) {
             if (onDone != null) {
                 onDone.run();
             }
@@ -2386,30 +2126,8 @@ public final class TableManager implements Listener, WagerHost {
         // A wave already in the air must land before this one starts, or its chips would be
         // dropped from the flying list and left hanging over the table.
         Runnable pending = finishPayoutNow(table);
-        IdentityHashMap<PotPile, PayoutFlight> dests = new IdentityHashMap<>();
-        for (PayoutFlight flight : assignments) {
-            if (flight == null || flight.pile() == null) {
-                continue;
-            }
-            dests.put(flight.pile(), flight);
-        }
-        if (dests.isEmpty()) {
-            if (onDone != null) {
-                onDone.run();
-            }
-            runPending(pending);
-            return;
-        }
-        List<PotPile> keep = new ArrayList<>();
-        for (PotPile pile : table.getPiles()) {
-            if (!dests.containsKey(pile)) {
-                keep.add(pile);
-            }
-        }
-        table.getPiles().clear();
-        table.getPiles().addAll(keep);
         save(table);
-        startPayoutFlight(table, new ArrayList<>(dests.values()), onDone);
+        startPayoutFlight(table, new ArrayList<>(assignments), onDone);
         // Last, so a callback that flushes again sees this wave and lands it properly.
         runPending(pending);
     }
@@ -2426,49 +2144,36 @@ public final class TableManager implements Listener, WagerHost {
         UUID tableId = table.getId();
         int delay = 0;
         for (PayoutFlight flight : new ArrayList<>(snapshot)) {
-            PotPile pile = flight.pile();
+            // Tray flights have no player to reach. Anyone else must still be online to watch.
             UUID destId = flight.destId();
-            if (destId != null && !flight.stayOnTray()) {
-                Player dest = Bukkit.getPlayer(destId);
-                if (dest == null || !dest.isOnline()) {
-                    finishPayoutPile(table, gen, pile);
-                    continue;
-                }
+            if (destId != null && Bukkit.getPlayer(destId) == null) {
+                finishPayoutPile(table, flight);
+                continue;
             }
             if (ticks <= 0) {
-                finishPayoutPile(table, gen, pile);
+                finishPayoutPile(table, flight);
                 continue;
             }
             final int d = delay++;
-            Bukkit.getScheduler().runTaskLater(Games.plugin, () -> flyPayoutPile(tableId, gen, pile, ticks), d);
-        }
-        if (table.payoutFlying().isEmpty()) {
-            finishPayoutWave(table, gen);
+            Bukkit.getScheduler().runTaskLater(Games.plugin, () -> flyPayoutPile(tableId, gen, flight, ticks), d);
         }
     }
 
-    private void flyPayoutPile(UUID tableId, int gen, PotPile pile, int ticks) {
+    private void flyPayoutPile(UUID tableId, int gen, PayoutFlight flight, int ticks) {
         Table table = tables.get(tableId);
-        if (!payoutActive(table, gen) || pile == null) {
+        if (!payoutActive(table, gen)) {
             return;
         }
-        PayoutFlight flight = flightOf(table, pile);
-        if (flight == null) {
-            return;
-        }
+        PotPile pile = flight.pile();
         Location dest = destLocation(table, flight);
         Location origin = table.getOrigin();
         WagerPileStyle style = ChipItems.pileStyle(pile.item());
         List<UUID> tokens = new ArrayList<>(pile.tokens());
-        if (tokens.isEmpty()) {
-            finishPayoutPile(table, gen, pile);
-            return;
-        }
         DisplayManager displays = DisplayManager.get();
         for (int layer = 0; layer < tokens.size(); layer++) {
             UUID token = tokens.get(layer);
-            float yaw = layer < pile.layerYaws().size() ? pile.layerYaws().get(layer) : table.getYaw();
-            DisplayPose start = chipPose(style, yaw);
+            // rebuildPile gave every drawn layer a yaw.
+            DisplayPose start = chipPose(style, pile.layerYaws().get(layer));
             double layerY = origin.getY() + layer * style.layerGap();
             float dx = (float) (dest.getX() - pile.x());
             float dy = (float) (dest.getY() + 1.0 - layerY);
@@ -2492,7 +2197,7 @@ public final class TableManager implements Listener, WagerHost {
                         float ease = 1f - (1f - t) * (1f - t);
                         displays.setTransform(token, lerpPose(start, end, ease), 1);
                         if (s == ticks && layerIndex == last) {
-                            finishPayoutPile(still, gen, pile);
+                            finishPayoutPile(still, flight);
                         }
                     }, s);
                 }
@@ -2510,44 +2215,22 @@ public final class TableManager implements Listener, WagerHost {
         }
         if (flight.destId() != null) {
             Player dest = Bukkit.getPlayer(flight.destId());
-            if (dest != null && dest.isOnline()) {
+            if (dest != null) {
                 return dest.getLocation();
             }
         }
         return table.getOrigin();
     }
 
-    private static PayoutFlight flightOf(Table table, PotPile pile) {
-        for (PayoutFlight flight : table.payoutFlying()) {
-            if (flight.pile() == pile) {
-                return flight;
-            }
-        }
-        return null;
-    }
-
-    private static boolean removeFlying(Table table, PotPile pile) {
-        List<PayoutFlight> flying = table.payoutFlying();
-        for (int i = 0; i < flying.size(); i++) {
-            if (flying.get(i).pile() == pile) {
-                flying.remove(i);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void finishPayoutPile(Table table, int gen, PotPile pile) {
-        if (!payoutActive(table, gen)) {
-            return;
-        }
-        PayoutFlight flight = flightOf(table, pile);
-        if (flight == null || !removeFlying(table, pile)) {
-            return;
-        }
+    /**
+     * Only called while the flight's wave is still in the air: straight from
+     * {@link #startPayoutFlight}, or from the last animation step after checking the wave.
+     */
+    private void finishPayoutPile(Table table, PayoutFlight flight) {
+        table.payoutFlying().remove(flight);
         settleFlight(table, flight);
         if (table.payoutFlying().isEmpty()) {
-            finishPayoutWave(table, gen);
+            finishPayoutWave(table);
         }
     }
 
@@ -2561,23 +2244,19 @@ public final class TableManager implements Listener, WagerHost {
         playChipSound(table, destLocation(table, flight));
     }
 
-    private void finishPayoutWave(Table table, int gen) {
-        if (!payoutActive(table, gen)) {
-            return;
-        }
+    private void finishPayoutWave(Table table) {
         Runnable onDone = table.takePayoutOnDone();
         LinkedHashSet<UUID> dests = new LinkedHashSet<>(table.payoutDests());
         table.endPayout();
-        if (onDone == null) {
+        if (onDone != null) {
+            onDone.run();
+        } else {
             for (UUID destId : dests) {
                 Player dest = Bukkit.getPlayer(destId);
-                if (dest != null && dest.isOnline()) {
+                if (dest != null) {
                     dest.sendMessage(Messages.get("wager.paid", "player", dest.getName()));
                 }
             }
-        }
-        if (onDone != null) {
-            onDone.run();
         }
         notifyFeltPiles(table);
     }
@@ -2591,7 +2270,7 @@ public final class TableManager implements Listener, WagerHost {
      * Returns the wave callback so the caller can run it once it is safe.
      */
     private Runnable finishPayoutNow(Table table) {
-        if (table == null || !table.isPaying()) {
+        if (!table.isPaying()) {
             return null;
         }
         table.bumpPayoutGen();
@@ -2605,13 +2284,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void voteWager(Player player, boolean accept) {
+        // Every payout cancels the vote first, so a table with a vote is never mid-payout.
         Table table = tableForVote(player);
         if (table == null) {
             player.sendMessage(Messages.get("wager.no_vote"));
-            return;
-        }
-        if (table.isPaying()) {
-            player.sendMessage(Messages.get("wager.paying"));
             return;
         }
         WagerVote vote = table.getVote();
@@ -2622,10 +2298,6 @@ public final class TableManager implements Listener, WagerHost {
             } else {
                 player.sendMessage(Messages.get("wager.not_eligible"));
             }
-            return;
-        }
-        if (!vote.eligible().contains(id)) {
-            player.sendMessage(Messages.get("wager.not_eligible"));
             return;
         }
         if (vote.yes().contains(id) || vote.no().contains(id)) {
@@ -2651,30 +2323,25 @@ public final class TableManager implements Listener, WagerHost {
                 cancelVote(table, "wager.cancelled");
                 continue;
             }
-            if (vote.eligible().contains(id) && !vote.yes().contains(id) && !vote.no().contains(id)) {
+            // A no already cast is simply cast again, which cannot resolve a vote it left standing.
+            if (vote.eligible().contains(id) && !vote.yes().contains(id)) {
                 vote.no().add(id);
                 tryResolveVote(table);
             }
         }
     }
 
+    /**
+     * Whatever ends a vote or removes its table cancels this timer first, so when it fires the
+     * table and its vote are both still there.
+     */
     private void expireVote(UUID tableId) {
-        Table table = tables.get(tableId);
-        if (table == null) {
-            return;
-        }
-        WagerVote vote = table.getVote();
-        if (vote == null) {
-            return;
-        }
-        failVote(table, "wager.expired");
+        failVote(tables.get(tableId), "wager.expired");
     }
 
+    /** Callers have already found a vote on this table. */
     private void tryResolveVote(Table table) {
         WagerVote vote = table.getVote();
-        if (vote == null) {
-            return;
-        }
         if (vote.majorityYes()) {
             passVote(table);
             return;
@@ -2684,33 +2351,27 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
+    /*
+     * A proposer who logs off cancels their vote from onQuit, so while a vote stands its proposer
+     * can always be looked up by name. The outcome is announced before the vote is detached, so
+     * the proposer and voters hear it even if a game has already taken them off the seats.
+     */
+
     private void passVote(Table table) {
         WagerVote vote = table.getVote();
-        if (vote == null) {
-            return;
-        }
         vote.cancelExpire();
-        table.setVote(null);
         Player proposer = Bukkit.getPlayer(vote.proposerId());
-        String name = proposer != null ? proposer.getName() : "Someone";
-        if (proposer == null || !proposer.isOnline()) {
-            messageActives(table, Messages.get("wager.declined", "player", name));
-            return;
-        }
-        messageActives(table, Messages.get("wager.accepted", "player", name));
+        messageActives(table, Messages.get("wager.accepted", "player", proposer.getName()));
+        table.setVote(null);
         armLootPlace(proposer, table, vote.item(), vote.denars());
     }
 
     private void failVote(Table table, String messageKey) {
         WagerVote vote = table.getVote();
-        if (vote == null) {
-            return;
-        }
         vote.cancelExpire();
-        table.setVote(null);
-        Player proposer = Bukkit.getPlayer(vote.proposerId());
-        String name = proposer != null ? proposer.getName() : "Someone";
+        String name = Bukkit.getPlayer(vote.proposerId()).getName();
         messageActives(table, Messages.get(messageKey, "player", name));
+        table.setVote(null);
     }
 
     private void cancelVote(Table table, String messageKey) {
@@ -2719,107 +2380,76 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         vote.cancelExpire();
-        table.setVote(null);
         if (messageKey != null) {
-            Player proposer = Bukkit.getPlayer(vote.proposerId());
-            String name = proposer != null ? proposer.getName() : "Someone";
+            String name = Bukkit.getPlayer(vote.proposerId()).getName();
             messageActives(table, Messages.get(messageKey, "player", name));
         }
+        table.setVote(null);
     }
 
     private void armLootPlace(Player player, Table table, ItemStack snapshot, int denars) {
-        clearLootArm(player.getUniqueId(), false);
+        clearLootArm(player.getUniqueId());
         ItemStack copy = snapshot.clone();
         UUID playerId = player.getUniqueId();
         UUID tableId = table.getId();
         int seconds = Math.max(1, Cache.wagerPlaceSeconds);
+        // Clearing or replacing the arm, and logging off, all cancel this timer.
         BukkitTask expire = Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
-            LootArm arm = lootArms.get(playerId);
-            if (arm == null || !arm.tableId.equals(tableId)) {
-                return;
-            }
-            clearLootArm(playerId, false);
-            Player still = Bukkit.getPlayer(playerId);
-            if (still != null && still.isOnline()) {
-                still.sendMessage(Messages.get("wager.place_timeout"));
-            }
+            clearLootArm(playerId);
+            player.sendMessage(Messages.get("wager.place_timeout"));
         }, seconds * 20L);
         lootArms.put(playerId, new LootArm(tableId, copy, denars, expire));
         player.sendMessage(Messages.get("wager.place_click", "seconds", String.valueOf(seconds)));
     }
 
+    /**
+     * Removing a table cancels its arms, and blackjack never arms loot, so an armed table is
+     * still there and takes items.
+     */
     private boolean tryLootPlace(Player player, Location click) {
         LootArm arm = lootArms.get(player.getUniqueId());
         if (arm == null) {
             return false;
         }
         Table table = tables.get(arm.tableId);
-        if (table == null) {
-            clearLootArm(player.getUniqueId(), false);
-            return true;
-        }
         FeltHit felt = findFelt(player, click);
-        if (felt == null || !felt.table().getId().equals(arm.tableId)) {
+        if (felt == null || felt.table() != table) {
             return false;
         }
-        if ("blackjack".equalsIgnoreCase(table.getGameId())) {
-            clearLootArm(player.getUniqueId(), false);
-            player.sendMessage(Messages.get("wager.coins_only"));
-            return true;
-        }
         ItemStack held = player.getInventory().getItemInMainHand();
-        if (held == null || !held.isSimilar(arm.item) || held.getAmount() < arm.item.getAmount()) {
+        if (!held.isSimilar(arm.item) || held.getAmount() < arm.item.getAmount()) {
             player.sendMessage(Messages.get("wager.wrong_item"));
             return true;
         }
         if (!dumpLoot(player, table, arm.item, arm.denars, felt.hit())) {
             return true;
         }
-        clearLootArm(player.getUniqueId(), false);
+        clearLootArm(player.getUniqueId());
         return true;
     }
 
     private void cancelLootArmsForTable(UUID tableId) {
         for (UUID playerId : new ArrayList<>(lootArms.keySet())) {
-            LootArm arm = lootArms.get(playerId);
-            if (arm != null && arm.tableId.equals(tableId)) {
-                clearLootArm(playerId, false);
+            if (lootArms.get(playerId).tableId.equals(tableId)) {
+                clearLootArm(playerId);
             }
         }
     }
 
-    private void clearLootArm(UUID playerId, boolean timeoutMessage) {
+    private void clearLootArm(UUID playerId) {
         LootArm arm = lootArms.remove(playerId);
-        if (arm == null) {
-            return;
-        }
-        if (arm.expireTask != null) {
+        if (arm != null) {
             arm.expireTask.cancel();
         }
-        if (timeoutMessage) {
-            Player player = Bukkit.getPlayer(playerId);
-            if (player != null && player.isOnline()) {
-                player.sendMessage(Messages.get("wager.place_timeout"));
-            }
-        }
     }
 
+    /** tryLootPlace has just checked the player still holds the whole offered stack. */
     private boolean dumpLoot(Player player, Table table, ItemStack snapshot, int denars, Location hit) {
-        ItemStack held = player.getInventory().getItemInMainHand();
         int need = snapshot.getAmount();
-        if (held == null || !held.isSimilar(snapshot) || held.getAmount() < need) {
-            player.sendMessage(Messages.get("wager.gone"));
-            return false;
-        }
         Location at = hit;
-        if (at == null || at.getWorld() == null
-                || (!onPlayArea(table, player, at) && !isDealerTrayPlace(table, player.getUniqueId(), at))) {
+        if (!onPlayArea(table, player, at) && !isDealerTrayPlace(table, player.getUniqueId(), at)) {
             FeltHit felt = findFelt(player, null);
             at = felt != null && felt.table() == table ? felt.hit() : fallbackFelt(table, player);
-        }
-        if (at == null || at.getWorld() == null) {
-            player.sendMessage(Messages.get("wager.spawn_failed"));
-            return false;
         }
         if (inShoeZone(table, at)
                 || (inTrayZone(table, at) && !isDealerTrayPlace(table, player.getUniqueId(), at))) {
@@ -2831,9 +2461,6 @@ public final class TableManager implements Listener, WagerHost {
             return false;
         }
         int placeDenars = denars * need;
-        if (!dealerTray && refuseBlackjackPlace(player, table, player.getUniqueId(), placeDenars)) {
-            return false;
-        }
         ItemStack one = snapshot.clone();
         one.setAmount(1);
         UUID bucket = dealerTray ? table.getId() : player.getUniqueId();
@@ -2843,7 +2470,8 @@ public final class TableManager implements Listener, WagerHost {
                 .move(Accounts.declared(table, player, one, denars),
                         Accounts.bucket(table, bucket).placedAt(at), placeDenars)
                 .commit();
-        if (!staked.ok() || staked.moved() < 1) {
+        // A refused transaction moves nothing, so the amount alone says whether it happened.
+        if (staked.moved() < 1) {
             player.sendMessage(Messages.get("wager.gone"));
             return false;
         }
@@ -2857,34 +2485,24 @@ public final class TableManager implements Listener, WagerHost {
         return true;
     }
 
+    /** Quitting takes a player off every table's seats, so every seat is online. */
     private Set<UUID> eligibleVoters(Table table, UUID proposerId) {
-        Set<UUID> out = new HashSet<>();
-        for (UUID id : table.actives()) {
-            if (id.equals(proposerId)) {
-                continue;
-            }
-            Player other = Bukkit.getPlayer(id);
-            if (other != null && other.isOnline()) {
-                out.add(id);
-            }
-        }
+        Set<UUID> out = new HashSet<>(table.actives());
+        out.remove(proposerId);
         return out;
     }
 
+    /** The proposer and every eligible voter are seated here, so the seats are the audience. */
     private void broadcastProposed(Table table, String playerName, ItemStack item, int denars) {
-        Set<UUID> ids = new HashSet<>(table.actives());
-        if (table.getVote() != null) {
-            ids.add(table.getVote().proposerId());
-            ids.addAll(table.getVote().eligible());
-        }
-        for (UUID id : ids) {
-            Player viewer = Bukkit.getPlayer(id);
-            if (viewer != null && viewer.isOnline()) {
-                WagerChat.sendProposed(viewer, playerName, item, denars);
-            }
+        for (UUID id : table.actives()) {
+            WagerChat.sendProposed(Bukkit.getPlayer(id), playerName, item, denars);
         }
     }
 
+    /**
+     * Every seat is online, and any seat leaving flushes the felt, which cancels the vote while
+     * the leaver can still hear it, so the vote's proposer and voters are online too.
+     */
     private void messageActives(Table table, String message) {
         Set<UUID> ids = new HashSet<>(table.actives());
         if (table.getVote() != null) {
@@ -2892,10 +2510,7 @@ public final class TableManager implements Listener, WagerHost {
             ids.addAll(table.getVote().eligible());
         }
         for (UUID id : ids) {
-            Player viewer = Bukkit.getPlayer(id);
-            if (viewer != null && viewer.isOnline()) {
-                viewer.sendMessage(message);
-            }
+            Bukkit.getPlayer(id).sendMessage(message);
         }
     }
 
@@ -2931,7 +2546,7 @@ public final class TableManager implements Listener, WagerHost {
         Table table = felt.table();
         Location hit = felt.hit();
         ItemStack held = player.getInventory().getItemInMainHand();
-        boolean empty = held == null || held.getType() == org.bukkit.Material.AIR || held.getAmount() <= 0;
+        boolean empty = held.isEmpty();
         if (!empty && "blackjack".equalsIgnoreCase(table.getGameId()) && !ChipItems.isMoneyCoin(held)
                 && !wagerLike(held)) {
             return false;
@@ -2987,14 +2602,12 @@ public final class TableManager implements Listener, WagerHost {
             return true;
         }
         UUID bucket = dealerTray ? table.getId() : player.getUniqueId();
-        // One coin of exactly this kind, picked out and staked as a single movement.
-        TxResult placed = wager().begin(table, dealerTray ? "dealer tray" : "bet")
+        // One coin of exactly this kind, picked out and staked as a single movement. The coin is in
+        // the player's hand and worth exactly this much, so the movement always goes through.
+        wager().begin(table, dealerTray ? "dealer tray" : "bet")
                 .move(Accounts.pockets(table, player, one::isSimilar),
                         Accounts.bucket(table, bucket).placedAt(hit), denars)
                 .commit();
-        if (!placed.ok() || placed.moved() < 1) {
-            return true;
-        }
         playChipSound(table, hit);
         if (!dealerTray) {
             table.actives().add(player.getUniqueId());
@@ -3015,22 +2628,20 @@ public final class TableManager implements Listener, WagerHost {
         if (!GuildTables.houseBacked(table)) {
             return false;
         }
-        if (dealer != null) {
-            dealer.sendMessage(Messages.get("wager.tray_is_funded"));
-        }
+        dealer.sendMessage(Messages.get("wager.tray_is_funded"));
         return true;
     }
 
+    /**
+     * Only asked about items that are not money coins. Without a coin, decoChips is always null
+     * and integerDenars needs a wager.items entry, which isChipKind already covers.
+     */
     private static boolean wagerLike(ItemStack held) {
-        return ChipItems.isChipKind(held) || ChipItems.decoChips(held) != null
-                || ChipItems.integerDenars(held).isPresent();
+        return ChipItems.isChipKind(held);
     }
 
     private FeltHit findFelt(Player player, Location click) {
         Location eye = player.getEyeLocation();
-        if (eye.getWorld() == null) {
-            return null;
-        }
         List<Table> nearby = new ArrayList<>();
         Table closest = null;
         double closestPlayer = Double.MAX_VALUE;
@@ -3051,7 +2662,8 @@ public final class TableManager implements Listener, WagerHost {
         for (Table table : nearby) {
             Location origin = table.getOrigin();
             Location hit;
-            if (click != null && click.getWorld() != null && click.getWorld().equals(origin.getWorld())) {
+            // A block click is always in the player's world, which atTable has already matched.
+            if (click != null) {
                 hit = origin.clone();
                 hit.setX(click.getX());
                 hit.setZ(click.getZ());
@@ -3076,7 +2688,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private static Location tablePlaceOrigin(PlayerInteractEvent event) {
-        if (event == null || event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
             return null;
         }
         if (event.getBlockFace() != BlockFace.UP) {
@@ -3101,7 +2713,7 @@ public final class TableManager implements Listener, WagerHost {
     private static Location clickHit(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         var ray = player.rayTraceBlocks(FELT_REACH);
-        if (ray == null || ray.getHitPosition() == null || player.getWorld() == null) {
+        if (ray == null) {
             return null;
         }
         return ray.getHitPosition().toLocation(player.getWorld());
@@ -3133,16 +2745,11 @@ public final class TableManager implements Listener, WagerHost {
 
     /** Tray chips are the ones drawn for the table's own bucket, wherever they sit. */
     public boolean isTrayPile(Table table, PotPile pile) {
-        return table != null && pile != null && table.getId().equals(pile.ownerId());
+        return table.getId().equals(pile.ownerId());
     }
 
     private static boolean isDealerTrayPlace(Table table, UUID ownerId, Location hit) {
-        return table != null && ownerId != null && ownerId.equals(table.dealerId()) && inTrayZone(table, hit);
-    }
-
-    private static boolean inNoBetZone(Table table, Location hit) {
-        TableLayout layout = Cache.layoutOf(table.getGameId());
-        return layout != null && layout.inNoBetZone(table, hit);
+        return ownerId.equals(table.dealerId()) && inTrayZone(table, hit);
     }
 
     private static boolean onFelt(Table table, Location hit) {
@@ -3160,13 +2767,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private boolean onPlayArea(Table table, Player player, Location hit, boolean allowBetPad) {
-        if (table == null || hit == null) {
-            return false;
-        }
         if (onFelt(table, hit)) {
             return true;
         }
-        if (!allowBetPad || player == null) {
+        if (!allowBetPad) {
             return false;
         }
         TableLayout layout = Cache.layoutOf(table.getGameId());
@@ -3179,27 +2783,28 @@ public final class TableManager implements Listener, WagerHost {
 
     private Location betPadCenter(Table table, Player player) {
         TableLayout layout = Cache.layoutOf(table.getGameId());
-        if (layout == null || layout.betZone() == null || !layout.betZone().present() || player == null) {
+        if (layout == null || layout.betZone() == null || !layout.betZone().present()) {
             return null;
         }
         HandLock lock = peekHandLock(table, player, false);
         return layout.betPadCenter(table, lock.x(), lock.z(), lock.placeYaw());
     }
 
+    /**
+     * Where loot goes when the click that placed it was on somebody else's tray. Only a table
+     * with a tray can get here, so there is always a layout.
+     */
     private Location fallbackFelt(Table table, Player player) {
+        Location pad = betPadCenter(table, player);
+        if (pad != null) {
+            return pad;
+        }
         TableLayout layout = Cache.layoutOf(table.getGameId());
-        if (layout != null && layout.betZone() != null && layout.betZone().present() && player != null) {
-            Location pad = betPadCenter(table, player);
-            if (pad != null) {
-                return pad;
-            }
+        Location center = layout.feltCenter(table);
+        if (layout.onFelt(table, center)) {
+            return center;
         }
-        if (layout != null) {
-            Location center = layout.feltCenter(table);
-            if (layout.onFelt(table, center)) {
-                return center;
-            }
-        }
+        // A box felt configured without a size falls back to the ring, which its centre is not on.
         Location origin = table.getOrigin();
         Location loc = player.getLocation();
         double dx = loc.getX() - origin.getX();
@@ -3226,13 +2831,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private boolean refuseBlackjackPlace(Player player, Table table, UUID ownerId, int placeDenars) {
-        if (table == null || player == null || !"blackjack".equalsIgnoreCase(table.getGameId())) {
+        if (!"blackjack".equalsIgnoreCase(table.getGameId())) {
             return false;
         }
-        if (!table.betOpen() || table.live()) {
-            player.sendMessage(Messages.get("bet.closed"));
-            return true;
-        }
+        // tryPlaceChip refuses closed or live blackjack tables first, and loot never reaches one.
         int max = table.maxBet();
         int have = ownedDenars(table, ownerId);
         if (have + placeDenars > max) {
@@ -3255,23 +2857,14 @@ public final class TableManager implements Listener, WagerHost {
         return boxOwners(table).size();
     }
 
+    /** Draw a freshly laid out pile. Both callers build a new pile, so there is nothing to clear. */
     private boolean rebuildPile(Table table, PotPile pile) {
         DisplayManager displays = DisplayManager.get();
-        for (UUID token : pile.tokens()) {
-            displays.despawn(token);
-        }
-        pile.tokens().clear();
         ItemStack visual = pileDisplayItem(pile);
-        if (visual == null) {
-            return false;
-        }
         WagerPileStyle style = ChipItems.pileStyle(pile.item());
         int layers = PotLayout.visibleLayers(pile.pieces(), style);
         Location origin = table.getOrigin();
         World world = origin.getWorld();
-        if (world == null) {
-            return false;
-        }
         while (pile.layerYaws().size() < layers) {
             float yaw = style.randomYaw()
                     ? table.getYaw() + ThreadLocalRandom.current().nextFloat() * 360f
@@ -3307,14 +2900,15 @@ public final class TableManager implements Listener, WagerHost {
 
     private static ItemStack pileDisplayItem(PotPile pile) {
         WagerPileStyle style = ChipItems.pileStyle(pile.item());
-        if (style.model() != null && !style.model().isBlank()) {
+        // Style resolution never leaves a blank model: it falls back to the configured item name.
+        if (style.model() != null) {
             ItemStack fromPath = TLibs.getItemAPI().getCreator().getItemFromPath(style.model());
             if (fromPath != null) {
                 fromPath.setAmount(1);
                 return fromPath;
             }
         }
-        return pile.item() != null ? pile.item().clone() : null;
+        return pile.item().clone();
     }
 
     private void despawnPile(PotPile pile) {
@@ -3325,16 +2919,16 @@ public final class TableManager implements Listener, WagerHost {
         pile.tokens().clear();
     }
 
+    /**
+     * Every despawnWorld caller has already emptied the felt: pickup and despawnWorldAll clear it
+     * with the rest of the money, and a table that fails to spawn has no stakes (a new table, or a
+     * loaded one whose stakes were refunded first). So there are no pile displays left to remove.
+     */
     private void despawnPiles(Table table) {
-        for (PotPile pile : table.getPiles()) {
-            despawnPile(pile);
-        }
+        table.getPiles().clear();
     }
 
     private void refundStreet(Table table, Player player, int street) {
-        if (table == null || player == null) {
-            return;
-        }
         List<PayoutFlight> flights = new ArrayList<>();
         wager().refundStreet(table, player.getUniqueId(), street, flights, "street refund");
         flushPiles(table, flights, null);
@@ -3345,17 +2939,15 @@ public final class TableManager implements Listener, WagerHost {
      * when the house funded it and to the dealer when a human did.
      */
     private void clearFeltNow(Table table, Player fallback) {
-        if (table == null) {
-            return;
-        }
         table.bumpPayoutGen();
         table.clearPayoutOnDone();
         List<UUID> owners = wager().potOwners(table);
         MoneyTx tx = wager().begin(table, "felt cleared");
         for (UUID owner : owners) {
             Player dest = Bukkit.getPlayer(owner);
-            if (dest == null || !dest.isOnline()) {
-                dest = fallback != null && fallback.isOnline() ? fallback : null;
+            if (dest == null) {
+                // Only a pickup passes a fallback, and the player picking the table up is online.
+                dest = fallback;
             }
             tx.moveAll(Accounts.bucket(table, owner), Accounts.payee(table, dest, owner));
         }
@@ -3363,10 +2955,11 @@ public final class TableManager implements Listener, WagerHost {
         for (UUID owner : owners) {
             wager().forget(table, owner);
         }
-        for (PotPile pile : new ArrayList<>(table.getPiles())) {
-            despawnPile(pile);
-        }
+        // The commit above redrew every pot bucket, and both callers settle the tray first.
         table.getPiles().clear();
+        for (PayoutFlight flight : new ArrayList<>(table.payoutFlying())) {
+            despawnPile(flight.pile());
+        }
         table.endPayout();
         notifyFeltPiles(table);
     }
@@ -3376,9 +2969,6 @@ public final class TableManager implements Listener, WagerHost {
      * and delete a staff mint float.
      */
     private void settleAutoTray(Table table, Location dropAt) {
-        if (table == null) {
-            return;
-        }
         UUID house = table.getId();
         if (table.ledger().total(house) < 1) {
             return;
@@ -3403,20 +2993,6 @@ public final class TableManager implements Listener, WagerHost {
                     .commit();
         }
         wager().forget(table, house);
-    }
-
-    private void dropItems(ItemStack items, Location dropAt, Player dest) {
-        if (items == null || items.getAmount() < 1) {
-            return;
-        }
-        Location at = dropAt;
-        if (at == null && dest != null && dest.isOnline()) {
-            at = dest.getLocation();
-        }
-        if (at == null || at.getWorld() == null) {
-            return;
-        }
-        at.getWorld().dropItemNaturally(at, items);
     }
 
     private boolean trySelectCard(Player player) {
@@ -3458,7 +3034,8 @@ public final class TableManager implements Listener, WagerHost {
         layoutHand(hit.table, player, 4, false, tokenId);
         holdLayout(player.getUniqueId(), (int) INSPECT_TICKS + 4);
         Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
-            if (!player.isOnline() || tableHolding(player.getUniqueId()) != hit.table) {
+            // Laying out a hand that has gone (mucked, or the player quit) would recreate it.
+            if (tableHolding(player.getUniqueId()) != hit.table) {
                 return;
             }
             layoutHand(hit.table, player, 4, false, null);
@@ -3475,18 +3052,16 @@ public final class TableManager implements Listener, WagerHost {
                 player.getEyeLocation().getDirection(),
                 Cache.handSelectRange,
                 entity -> tableFrom(entity) != null);
-        if (ray != null && ray.getHitEntity() != null) {
+        // An entity ray trace only reports a hit when it hit an entity.
+        if (ray != null) {
             return null;
         }
         Table table = tableHolding(player.getUniqueId());
         if (table == null) {
             return null;
         }
-        List<HandCard> hand = table.getHands().get(player.getUniqueId());
-        if (hand == null || hand.isEmpty()) {
-            return null;
-        }
-        HandCard card = CardSelector.closestOnRay(player, hand);
+        // tableHolding only answers for a player with a hand entry, so the list is never null.
+        HandCard card = CardSelector.closestOnRay(player, table.getHands().get(player.getUniqueId()));
         if (card == null) {
             return null;
         }
@@ -3496,9 +3071,6 @@ public final class TableManager implements Listener, WagerHost {
     private record HandHit(Table table, HandCard card) {}
 
     private static int countSelected(Table table, Player player) {
-        if (table == null || player == null) {
-            return 0;
-        }
         List<HandCard> hand = table.getHands().get(player.getUniqueId());
         if (hand == null) {
             return 0;
@@ -3517,7 +3089,7 @@ public final class TableManager implements Listener, WagerHost {
             return false;
         }
         List<HandCard> hand = table.getHands().get(player.getUniqueId());
-        if (hand == null || hand.isEmpty()) {
+        if (hand == null) {
             return false;
         }
         List<HandCard> selected = new ArrayList<>();
@@ -3539,10 +3111,10 @@ public final class TableManager implements Listener, WagerHost {
             if (ownerPose == null) {
                 continue;
             }
-            DisplayPose otherPose = displays.otherPoseOf(held.tokenId());
             flying.add(held.card());
             fromOwner.add(ownerPose);
-            fromOther.add(otherPose != null ? otherPose : ownerPose);
+            // A tracked token always has an other-viewer pose, which falls back to its own pose.
+            fromOther.add(displays.otherPoseOf(held.tokenId()));
             revealedCardTokens.remove(held.tokenId());
             displays.despawn(held.tokenId());
             hand.remove(held);
@@ -3561,17 +3133,14 @@ public final class TableManager implements Listener, WagerHost {
         int deal = Math.max(0, Cache.handDealTicks);
         holdLayout(playerId, stagger * Math.max(0, flying.size() - 1) + deal + 3);
         playCardSound(player);
-        if (player.isOnline()) {
-            player.sendMessage(Messages.get("hand.returned_selected"));
-        }
-        UUID tableId = table.getId();
+        player.sendMessage(Messages.get("hand.returned_selected"));
         for (int i = 0; i < flying.size(); i++) {
             final Card card = flying.get(i);
             final DisplayPose ownerFrom = fromOwner.get(i);
             final DisplayPose otherFrom = fromOther.get(i);
             final int step = i;
             Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
-                if (!dealActive(playerId, gen, tableId)) {
+                if (!dealActive(playerId, gen)) {
                     return;
                 }
                 startReturnCourier(table, player, card, ownerFrom, otherFrom, gen);
@@ -3652,9 +3221,6 @@ public final class TableManager implements Listener, WagerHost {
 
     private void startRevealSequence(Table table, Player player, List<HandCard> hand, List<HandCard> band,
             boolean show) {
-        if (band == null || band.isEmpty()) {
-            return;
-        }
         List<HandCard> order = handOrder(table, hand);
         List<Integer> indices = new ArrayList<>();
         List<HandCard> changing = new ArrayList<>();
@@ -3670,11 +3236,9 @@ public final class TableManager implements Listener, WagerHost {
             indices.add(i);
             changing.add(held);
         }
-        if (indices.isEmpty()) {
-            return;
-        }
+        // The band is never empty and show was chosen from it, so at least one card turns over.
         UUID id = player.getUniqueId();
-        stopRevealExtras(id);
+        cancelReveal(id);
         revealBusy.add(id);
         int gen = revealGen.merge(id, 1, Integer::sum);
         selectAnimGen.merge(id, 1, Integer::sum);
@@ -3693,15 +3257,12 @@ public final class TableManager implements Listener, WagerHost {
         int stagger = Math.max(0, Cache.handRevealStagger);
         int flip = Math.max(1, Cache.handRevealFlip);
         holdLayout(id, stagger * Math.max(0, steps - 1) + flip + 3);
-        UUID tableId = table.getId();
         for (int i = 0; i < steps; i++) {
             final int step = i;
             Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
+                // Leaving cancels the reveal. Only wipeHands skips that, and it has already
+                // despawned every token the flip would touch.
                 if (!Integer.valueOf(gen).equals(revealGen.get(id))) {
-                    return;
-                }
-                if (!player.isOnline() || tableHolding(id) == null
-                        || !tableHolding(id).getId().equals(tableId)) {
                     return;
                 }
                 int index = indices.get(show ? step : (steps - 1 - step));
@@ -3717,11 +3278,11 @@ public final class TableManager implements Listener, WagerHost {
                 restorePrivateFaces(player, changing);
             }
             syncRevealedHands(id, live);
-            if (player.isOnline()) {
-                Table still = tableHolding(id);
-                if (still != null && still.getId().equals(table.getId())) {
-                    layoutHand(table, player, Cache.handFollowTicks, false, null);
-                }
+            // After wipeHands the hand may be gone or at another table. Laying it out here would
+            // recreate an empty one.
+            Table still = tableHolding(id);
+            if (still != null && still.getId().equals(table.getId())) {
+                layoutHand(table, player, Cache.handFollowTicks, false, null);
             }
             revealBusy.remove(id);
         }, (long) stagger * Math.max(0, steps - 1) + flip + 2);
@@ -3754,9 +3315,6 @@ public final class TableManager implements Listener, WagerHost {
 
     private void flipSandwich(Table table, Player player, List<HandCard> hand, int index,
             List<DisplayPose> down, List<DisplayPose> up, boolean toFace, int gen) {
-        if (index < 0 || index >= hand.size() || index >= down.size() || index >= up.size()) {
-            return;
-        }
         HandCard held = hand.get(index);
         ItemStack face = TLibs.getItemAPI().getCreator().getItemFromPath(held.card().getItem());
         ItemStack back = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getBackItem());
@@ -3794,24 +3352,18 @@ public final class TableManager implements Listener, WagerHost {
                 return;
             }
             revealedCardTokens.remove(token);
-            respawnPrivateCard(table, player, held.tokenId(), up.get(index), back, face);
+            respawnPrivateCard(table, player, held, up.get(index), back, face);
         }, 1L + flip);
     }
 
-    private void respawnPrivateCard(Table table, Player player, UUID oldToken, DisplayPose pose,
+    private void respawnPrivateCard(Table table, Player player, HandCard old, DisplayPose pose,
             ItemStack back, ItemStack face) {
-        List<HandCard> live = table.handOf(player.getUniqueId());
-        int liveIndex = -1;
-        for (int i = 0; i < live.size(); i++) {
-            if (live.get(i).tokenId().equals(oldToken)) {
-                liveIndex = i;
-                break;
-            }
-        }
+        // A reload wipes hands without cancelling the flip, so never recreate a hand that has gone.
+        List<HandCard> live = table.getHands().get(player.getUniqueId());
+        int liveIndex = live != null ? live.indexOf(old) : -1;
         if (liveIndex < 0) {
             return;
         }
-        HandCard old = live.get(liveIndex);
         DisplayManager displays = DisplayManager.get();
         revealedCardTokens.remove(old.tokenId());
         displays.despawn(old.tokenId());
@@ -3834,19 +3386,11 @@ public final class TableManager implements Listener, WagerHost {
         live.set(liveIndex, next);
     }
 
-    private void startSingleRevealFlip(Table table, Player player, UUID tokenId) {
-        List<HandCard> hand = table.handOf(player.getUniqueId());
-        List<HandCard> order = handOrder(table, hand);
-        int index = -1;
-        for (int i = 0; i < order.size(); i++) {
-            if (order.get(i).tokenId().equals(tokenId)) {
-                index = i;
-                break;
-            }
-        }
-        if (index < 0) {
-            return;
-        }
+    /** Turn over a card that has just joined a hand whose other cards are all showing. */
+    private void startSingleRevealFlip(Table table, Player player, HandCard added) {
+        List<HandCard> order = handOrder(table, table.handOf(player.getUniqueId()));
+        int index = order.indexOf(added);
+        UUID tokenId = added.tokenId();
         UUID id = player.getUniqueId();
         revealBusy.add(id);
         int gen = revealGen.merge(id, 1, Integer::sum);
@@ -3873,41 +3417,29 @@ public final class TableManager implements Listener, WagerHost {
         }, flip + 2);
     }
 
-    private void stopRevealExtras(UUID playerId) {
+    private void cancelReveal(UUID playerId) {
         revealBusy.remove(playerId);
         revealGen.merge(playerId, 1, Integer::sum);
-        List<UUID> extras = revealExtras.remove(playerId);
-        if (extras == null) {
-            return;
-        }
-        DisplayManager displays = DisplayManager.get();
-        for (UUID extra : extras) {
-            displays.despawn(extra);
-        }
     }
 
+    /** Every caller is acting for an online player, usually the one who clicked. */
     private void playCardSound(Player player) {
-        if (player == null || !player.isOnline()) {
-            return;
-        }
         playCardSound(player.getLocation());
     }
 
     private void playCardSound(Location at) {
-        if (Cache.cardSound == null || Cache.cardSoundVolume <= 0f || at == null || at.getWorld() == null) {
+        if (Cache.cardSound == null || Cache.cardSoundVolume <= 0f) {
             return;
         }
         at.getWorld().playSound(at, Cache.cardSound, Cache.cardSoundVolume, Cache.cardSoundPitch);
     }
 
+    /** Every caller passes a spot on the table's own felt, so it has the table's world. */
     public void playChipSound(Table table, Location at) {
-        if (at == null || at.getWorld() == null) {
-            return;
-        }
         Sound sound = Cache.chipSound;
         float volume = Cache.chipSoundVolume;
         float pitch = Cache.chipSoundPitch;
-        TableLayout layout = table != null ? Cache.layoutOf(table.getGameId()) : null;
+        TableLayout layout = Cache.layoutOf(table.getGameId());
         if (layout != null && layout.chipFx() != null) {
             sound = layout.chipFx().sound();
             volume = layout.chipFx().volume();
@@ -3931,64 +3463,42 @@ public final class TableManager implements Listener, WagerHost {
         layoutHoldUntil.put(playerId, System.currentTimeMillis() + ticks * 50L + 50L);
     }
 
+    /**
+     * Slide a card the player has just picked out of, or back into, their fan. The card comes
+     * from hitOwnCard, so it is in the hand, tracked by the display manager and never public
+     * (trySelectCard refuses once any card is showing).
+     */
     private void pushSelectedCard(Table table, Player player, HandCard card) {
         List<HandCard> hand = table.handOf(player.getUniqueId());
-        int dealIndex = -1;
-        for (int i = 0; i < hand.size(); i++) {
-            if (hand.get(i).tokenId().equals(card.tokenId())) {
-                dealIndex = i;
-                break;
-            }
-        }
-        if (dealIndex < 0) {
-            return;
-        }
         int n = countInSlot(hand, card.slot());
         int sortIndex = indexInSlot(handOrder(table, hand), card);
-        if (sortIndex < 0) {
-            sortIndex = indexInSlot(hand, card);
-        }
         HandLock lock = lockHand(table, player, false);
         Location origin = table.getOrigin();
         Location anchor = lockLocation(player, lock);
         int groups = slotSpan(hand);
         DisplayPose ownerEnd = playerFanPose(origin, anchor, lock, card.slot(), groups, sortIndex, n,
                 card.isSelected(), 0f, HandLayout.FACE_UP_PITCH);
-        DisplayPose otherEnd = revealedCardTokens.contains(card.tokenId())
-                ? ownerEnd
-                : playerFanPose(origin, anchor, lock, card.slot(), groups, indexInSlot(hand, card), n,
-                        card.isSelected(), 0f, HandLayout.FACE_UP_PITCH);
-        DisplayPose startOwner = DisplayManager.get().poseOf(card.tokenId());
-        DisplayPose startOther = DisplayManager.get().otherPoseOf(card.tokenId());
-        if (startOther == null) {
-            startOther = startOwner;
-        }
+        DisplayPose otherEnd = playerFanPose(origin, anchor, lock, card.slot(), groups, indexInSlot(hand, card), n,
+                card.isSelected(), 0f, HandLayout.FACE_UP_PITCH);
         int ticks = Cache.handSelectTicks;
         DisplayManager.get().setLayoutOwner(card.tokenId(), player.getUniqueId());
-        if (ticks <= 0 || startOwner == null) {
-            if (ticks > 0) {
-                holdLayout(player.getUniqueId(), ticks);
-            }
-            DisplayManager.get().setTransformSplit(card.tokenId(), ownerEnd, otherEnd, Math.max(0, ticks));
+        if (ticks <= 0) {
+            DisplayManager.get().setTransformSplit(card.tokenId(), ownerEnd, otherEnd, 0);
             return;
         }
         holdLayout(player.getUniqueId(), ticks);
         int gen = selectAnimGen.merge(player.getUniqueId(), 1, Integer::sum);
         UUID playerId = player.getUniqueId();
         UUID tokenId = card.tokenId();
-        UUID tableId = table.getId();
-        DisplayPose fromOwner = startOwner;
-        DisplayPose fromOther = startOther;
+        DisplayPose fromOwner = DisplayManager.get().poseOf(tokenId);
+        DisplayPose fromOther = DisplayManager.get().otherPoseOf(tokenId);
         for (int step = 1; step <= ticks; step++) {
             final int s = step;
             Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
                 if (!Integer.valueOf(gen).equals(selectAnimGen.get(playerId))) {
                     return;
                 }
-                Table still = tableHolding(playerId);
-                if (!player.isOnline() || still == null || !still.getId().equals(tableId)) {
-                    return;
-                }
+                // Quitting clears the generation. wipeHands does not, but it despawns the token.
                 float t = s / (float) ticks;
                 float ease = 1f - (1f - t) * (1f - t);
                 DisplayManager.get().setTransformSplit(tokenId,
@@ -4003,26 +3513,19 @@ public final class TableManager implements Listener, WagerHost {
         if (revealBusy.contains(player.getUniqueId())) {
             return;
         }
-        if (!allowFreeDraw(table, player)) {
-            player.sendMessage(Messages.get("hand.locked"));
-            return;
-        }
-        ItemStack main = player.getInventory().getItemInMainHand();
-        if (main != null && main.getType() != org.bukkit.Material.AIR && main.getAmount() > 0) {
+        // The shoe click only gets here once allowFreeDraw has passed.
+        if (!player.getInventory().getItemInMainHand().isEmpty()) {
             player.sendMessage(Messages.get("hand.need_empty"));
             return;
         }
-        drawOneToPlayer(table, player, 0, null);
+        drawOneToPlayer(table, player, 0, null, null);
     }
 
-    private boolean drawOneToPlayer(Table table, Player player, Runnable after) {
-        return drawOneToPlayer(table, player, 0, after);
-    }
-
-    private boolean drawOneToPlayer(Table table, Player player, int slot, Runnable after) {
-        if (revealBusy.contains(player.getUniqueId())) {
-            return false;
-        }
+    /**
+     * Both callers, tryDraw and dealRemaining, have just checked the player is not mid-reveal.
+     * {@code after} runs once the card has landed, or {@code stopped} if it is stopped in the air.
+     */
+    private boolean drawOneToPlayer(Table table, Player player, int slot, Runnable after, Runnable stopped) {
         Table other = tableHolding(player.getUniqueId());
         if (other != null && !other.getId().equals(table.getId())) {
             player.sendMessage(Messages.get("hand.busy"));
@@ -4038,29 +3541,42 @@ public final class TableManager implements Listener, WagerHost {
                 player.sendMessage(Messages.get("hand.empty"));
                 return false;
             }
-            if (table.isRecycling()) {
-                return false;
-            }
             UUID playerId = player.getUniqueId();
             UUID tableId = table.getId();
+            // Returning true promises that after, or stopped, runs. Go back through dealRemaining once
+            // the shoe is full, so a player who started a reveal meanwhile is handled like any deal.
+            Runnable done = orNothing(after);
+            Runnable retry = () -> {
+                Table still = tables.get(tableId);
+                Player online = Bukkit.getPlayer(playerId);
+                if (still != null && online != null) {
+                    dealRemaining(still, online, 1, slot, done, orNothing(stopped));
+                } else {
+                    done.run();
+                }
+            };
+            if (table.isRecycling()) {
+                // Another shuffle is already bringing the discards back, so wait for it.
+                Bukkit.getScheduler().runTaskLater(Games.plugin, retry, 1L);
+                return true;
+            }
+            // The recycle only calls back while this table is still placed.
             recycleIfNeeded(table, () -> {
-                Player still = Bukkit.getPlayer(playerId);
-                Table live = tables.get(tableId);
-                if (still == null || !still.isOnline() || live == null) {
+                if (table.getDeck().remaining() == 0) {
+                    // The table's shuffle policy kept the discards out (blackjack shuffles per
+                    // round), so there is nothing to deal until it does. Retrying would loop.
+                    player.sendMessage(Messages.get("hand.empty"));
+                    done.run();
                     return;
                 }
-                drawOneToPlayer(live, still, slot, after);
+                retry.run();
             });
             return true;
         }
         int layersBefore = StackLayout.visibleLayers(table.getDeck().remaining(), table.getDeck().size());
         float stackTopY = stackTopOffset(layersBefore);
-        Optional<Card> drawn = table.getDeck().draw();
-        if (drawn.isEmpty()) {
-            player.sendMessage(Messages.get("hand.empty"));
-            return false;
-        }
-        Card card = drawn.get();
+        // The shoe was checked above, so there is a card to draw.
+        Card card = table.getDeck().draw().orElseThrow();
         ItemStack face = TLibs.getItemAPI().getCreator().getItemFromPath(card.getItem());
         UUID playerId = player.getUniqueId();
         List<HandCard> live = table.handOf(playerId);
@@ -4102,12 +3618,12 @@ public final class TableManager implements Listener, WagerHost {
             otherFan = fan;
         }
         if (Cache.handDealTicks <= 0) {
-            UUID tokenId = spawnPrivateHandCard(table, player, card, face, back, fan, destSlot);
+            HandCard added = spawnPrivateHandCard(table, player, card, face, back, fan, destSlot);
             layoutHand(table, player, Cache.interpolationTicks, true, null);
             holdLayout(playerId, Cache.interpolationTicks);
             playCardSound(player);
-            if (tokenId != null && autoReveal) {
-                startSingleRevealFlip(table, player, tokenId);
+            if (added != null && autoReveal) {
+                startSingleRevealFlip(table, player, added);
             }
             runAfterDraw(player, after);
             return true;
@@ -4136,12 +3652,12 @@ public final class TableManager implements Listener, WagerHost {
         flyCourier(table, player, courierId, start, start, endOwner, endOther, gen, () -> {
             finishDrawCourier(table, player, card, face, back, fan, courierId, gen, destSlot);
             runAfterDraw(player, after);
-        });
+        }, () -> runAfterDraw(player, stopped));
         return true;
     }
 
     private void runAfterDraw(Player player, Runnable after) {
-        if (after == null || player == null) {
+        if (after == null) {
             return;
         }
         UUID id = player.getUniqueId();
@@ -4149,20 +3665,17 @@ public final class TableManager implements Listener, WagerHost {
         Bukkit.getScheduler().runTaskLater(Games.plugin, after, delay);
     }
 
-    private UUID spawnPrivateHandCard(Table table, Player player, Card card, ItemStack face, ItemStack back,
+    private HandCard spawnPrivateHandCard(Table table, Player player, Card card, ItemStack face, ItemStack back,
             DisplayPose fan, int slot) {
         UUID tokenId = UUID.randomUUID();
-        ItemStack spawnItem = back != null ? back : face;
-        if (spawnItem == null || !DisplayManager.get().spawn(tokenId, table.getOrigin(), spawnItem, fan)) {
+        if (!DisplayManager.get().spawn(tokenId, table.getOrigin(), back, fan)) {
             table.getDeck().discard(card);
             rebuildCardStacks(table);
             save(table);
             return null;
         }
         DisplayManager.get().setLayoutOwner(tokenId, player.getUniqueId());
-        if (back != null) {
-            DisplayManager.get().setItem(tokenId, back);
-        }
+        DisplayManager.get().setItem(tokenId, back);
         if (face != null) {
             DisplayManager.get().setItemFor(tokenId, player, face);
         }
@@ -4170,22 +3683,20 @@ public final class TableManager implements Listener, WagerHost {
         held.setSlot(slot);
         table.handOf(player.getUniqueId()).add(held);
         save(table);
-        return tokenId;
+        return held;
     }
 
     private void finishDrawCourier(Table table, Player player, Card card, ItemStack face, ItemStack back,
             DisplayPose fan, UUID courierId, int gen, int slot) {
+        // Only flyCourier calls this, straight after checking the deal is still active.
         UUID playerId = player.getUniqueId();
-        if (!dealActive(playerId, gen, table.getId())) {
-            return;
-        }
         untrackDealCourier(playerId, courierId);
         DisplayManager.get().despawn(courierId);
         removePendingCard(playerId, card);
-        UUID tokenId = spawnPrivateHandCard(table, player, card, face, back, fan, slot);
+        HandCard added = spawnPrivateHandCard(table, player, card, face, back, fan, slot);
         layoutHand(table, player, 0, false, null);
-        if (tokenId != null && othersAllPublic(table.handOf(playerId), tokenId)) {
-            startSingleRevealFlip(table, player, tokenId);
+        if (added != null && othersAllPublic(table.handOf(playerId), added.tokenId())) {
+            startSingleRevealFlip(table, player, added);
             return;
         }
         revealBusy.remove(playerId);
@@ -4198,28 +3709,26 @@ public final class TableManager implements Listener, WagerHost {
         float stackTopY = stackTopOffset(StackLayout.visibleLayers(table.getDeck().discarded(), table.getDeck().size()));
         Location courierOrigin = discard.clone().add(0, stackTopY, 0);
         DisplayPose startOwner = poseRelativeTo(fromOwner, table.getOrigin(), courierOrigin);
-        DisplayPose startOther = poseRelativeTo(fromOther != null ? fromOther : fromOwner, table.getOrigin(),
-                courierOrigin);
+        DisplayPose startOther = poseRelativeTo(fromOther, table.getOrigin(), courierOrigin);
         DisplayPose end = DisplayPose.flatOnTable(Cache.cardScale, 0f, table.getYaw());
         UUID courierId = UUID.randomUUID();
         ItemStack back = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getBackItem());
         if (back == null || Cache.handDealTicks <= 0
                 || !DisplayManager.get().spawn(courierId, courierOrigin, back, startOwner)) {
-            finishReturnCard(table, player, card, null, gen);
+            finishReturnCard(table, player, card, null);
             return;
         }
         DisplayManager.get().setLayoutOwner(courierId, playerId);
         DisplayManager.get().setTransformSplit(courierId, startOwner, startOther, 0);
         trackDealCourier(playerId, courierId);
+        // stopDeal has already put a stopped return on the discard pile, so nothing waits on it.
         flyCourier(table, player, courierId, startOwner, startOther, end, end, gen,
-                () -> finishReturnCard(table, player, card, courierId, gen));
+                () -> finishReturnCard(table, player, card, courierId), () -> { });
     }
 
-    private void finishReturnCard(Table table, Player player, Card card, UUID courierId, int gen) {
+    /** Both callers have just checked that this return is still active. */
+    private void finishReturnCard(Table table, Player player, Card card, UUID courierId) {
         UUID playerId = player.getUniqueId();
-        if (!dealActive(playerId, gen, table.getId())) {
-            return;
-        }
         if (courierId != null) {
             untrackDealCourier(playerId, courierId);
             DisplayManager.get().despawn(courierId);
@@ -4233,7 +3742,7 @@ public final class TableManager implements Listener, WagerHost {
         }
         revealBusy.remove(playerId);
         List<HandCard> hand = table.getHands().get(playerId);
-        if (hand == null || hand.isEmpty()) {
+        if (hand.isEmpty()) {
             table.getHands().remove(playerId);
             handLocks.remove(playerId);
             clearRevealed(playerId, hand);
@@ -4245,38 +3754,42 @@ public final class TableManager implements Listener, WagerHost {
         layoutHand(table, player, Cache.handFollowTicks, false, null);
     }
 
+    /**
+     * Flies a courier one step a tick, each step scheduling the next. The first step to find its
+     * deal stopped runs {@code onStopped} and ends the flight, so exactly one of the two runs.
+     */
     private void flyCourier(Table table, Player player, UUID courierId, DisplayPose startOwner, DisplayPose startOther,
-            DisplayPose endOwner, DisplayPose endOther, int gen, Runnable onArrive) {
+            DisplayPose endOwner, DisplayPose endOther, int gen, Runnable onArrive, Runnable onStopped) {
         DisplayManager displays = DisplayManager.get();
         displays.setLayoutOwner(courierId, player.getUniqueId());
-        displays.setTransformSplit(courierId, startOwner, startOther != null ? startOther : startOwner, 0);
-        UUID playerId = player.getUniqueId();
-        UUID tableId = table.getId();
+        displays.setTransformSplit(courierId, startOwner, startOther, 0);
         int ticks = Math.max(1, Cache.handDealTicks);
-        DisplayPose fromOther = startOther != null ? startOther : startOwner;
-        DisplayPose toOther = endOther != null ? endOther : endOwner;
-        Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
-            if (!dealActive(playerId, gen, tableId)) {
-                return;
-            }
-            for (int step = 1; step <= ticks; step++) {
-                final int s = step;
-                Bukkit.getScheduler().runTaskLater(Games.plugin, () -> {
-                    if (!dealActive(playerId, gen, tableId)) {
-                        return;
-                    }
-                    float t = s / (float) ticks;
-                    float ease = 1f - (1f - t) * (1f - t);
-                    displays.setTransformSplit(courierId,
-                            lerpPose(startOwner, endOwner, ease),
-                            lerpPose(fromOther, toOther, ease),
-                            1);
-                    if (s == ticks) {
-                        onArrive.run();
-                    }
-                }, s);
-            }
-        }, 1L);
+        IntConsumer moveTo = step -> {
+            float t = step / (float) ticks;
+            float ease = 1f - (1f - t) * (1f - t);
+            displays.setTransformSplit(courierId,
+                    lerpPose(startOwner, endOwner, ease),
+                    lerpPose(startOther, endOther, ease),
+                    1);
+        };
+        UUID playerId = player.getUniqueId();
+        Bukkit.getScheduler().runTaskLater(Games.plugin,
+                () -> courierStep(playerId, gen, 1, ticks, moveTo, onArrive, onStopped), 2L);
+    }
+
+    private void courierStep(UUID playerId, int gen, int step, int ticks, IntConsumer moveTo, Runnable onArrive,
+            Runnable onStopped) {
+        if (!dealActive(playerId, gen)) {
+            onStopped.run();
+            return;
+        }
+        moveTo.accept(step);
+        if (step == ticks) {
+            onArrive.run();
+            return;
+        }
+        Bukkit.getScheduler().runTaskLater(Games.plugin,
+                () -> courierStep(playerId, gen, step + 1, ticks, moveTo, onArrive, onStopped), 1L);
     }
 
     private static DisplayPose lerpPose(DisplayPose start, DisplayPose end, float ease) {
@@ -4316,21 +3829,15 @@ public final class TableManager implements Listener, WagerHost {
         return n;
     }
 
+    /** Position of a card within its own hand group. Every caller passes a card from this list. */
     private static int indexInSlot(List<HandCard> hand, HandCard card) {
-        if (card == null) {
-            return -1;
-        }
         int index = 0;
-        for (HandCard held : hand) {
-            if (held.slot() != card.slot()) {
-                continue;
+        for (HandCard held : hand.subList(0, hand.indexOf(card))) {
+            if (held.slot() == card.slot()) {
+                index++;
             }
-            if (held == card || held.tokenId().equals(card.tokenId())) {
-                return index;
-            }
-            index++;
         }
-        return -1;
+        return index;
     }
 
     /**
@@ -4365,10 +3872,8 @@ public final class TableManager implements Listener, WagerHost {
     /** How many hand groups this list spans, so the groups can be centred on the player. */
     private static int slotSpan(List<HandCard> hand) {
         int max = 0;
-        if (hand != null) {
-            for (HandCard held : hand) {
-                max = Math.max(max, held.slot());
-            }
+        for (HandCard held : hand) {
+            max = Math.max(max, held.slot());
         }
         return max + 1;
     }
@@ -4393,47 +3898,36 @@ public final class TableManager implements Listener, WagerHost {
         return tableRelative.withTranslation(t.x + dx, t.y + dy, t.z + dz);
     }
 
-    private boolean dealActive(UUID playerId, int gen, UUID tableId) {
-        if (!Integer.valueOf(gen).equals(dealGen.get(playerId))) {
-            return false;
-        }
-        Player player = Bukkit.getPlayer(playerId);
-        if (player == null || !player.isOnline()) {
-            return false;
-        }
-        Table still = tableHolding(playerId);
-        return still != null && still.getId().equals(tableId);
+    /**
+     * Whether a card animation may still land. Everything that takes a hand away or sees the
+     * player leave goes through stopDeal, which moves the generation on (wipeHands clears it),
+     * so a matching generation means the player is online and still holding this table.
+     */
+    private boolean dealActive(UUID playerId, int gen) {
+        return Integer.valueOf(gen).equals(dealGen.get(playerId));
     }
 
+    /** Both maps drop a player's entry as soon as their list empties. */
     private boolean dealStillFlying(UUID playerId) {
-        List<UUID> couriers = dealCouriers.get(playerId);
-        if (couriers != null && !couriers.isEmpty()) {
-            return true;
-        }
-        List<Card> pending = dealPendingCards.get(playerId);
-        return pending != null && !pending.isEmpty();
+        return dealCouriers.containsKey(playerId) || dealPendingCards.containsKey(playerId);
     }
 
     private void trackDealCourier(UUID playerId, UUID courierId) {
         dealCouriers.computeIfAbsent(playerId, key -> new ArrayList<>()).add(courierId);
     }
 
+    /** Only called for a courier this player still has in flight. */
     private void untrackDealCourier(UUID playerId, UUID courierId) {
         List<UUID> couriers = dealCouriers.get(playerId);
-        if (couriers == null) {
-            return;
-        }
         couriers.remove(courierId);
         if (couriers.isEmpty()) {
             dealCouriers.remove(playerId);
         }
     }
 
+    /** Only called for a card this player still has in flight. */
     private void removePendingCard(UUID playerId, Card card) {
         List<Card> pending = dealPendingCards.get(playerId);
-        if (pending == null) {
-            return;
-        }
         pending.remove(card);
         if (pending.isEmpty()) {
             dealPendingCards.remove(playerId);
@@ -4449,7 +3943,7 @@ public final class TableManager implements Listener, WagerHost {
             }
         }
         List<Card> pending = dealPendingCards.remove(playerId);
-        if (table != null && pending != null) {
+        if (pending != null) {
             for (Card card : pending) {
                 table.getDeck().discard(card);
             }
@@ -4460,11 +3954,6 @@ public final class TableManager implements Listener, WagerHost {
     private void layoutHand(Table table, Player player, int durationTicks, boolean forceHeading,
             UUID pulseToken) {
         layoutHand(table, player, durationTicks, forceHeading, pulseToken, -1, 0, 0);
-    }
-
-    private void layoutHand(Table table, Player player, int durationTicks, boolean forceHeading,
-            UUID pulseToken, int gapIndex, int extraSlots) {
-        layoutHand(table, player, durationTicks, forceHeading, pulseToken, gapIndex, extraSlots, 0);
     }
 
     private void layoutHand(Table table, Player player, int durationTicks, boolean forceHeading,
@@ -4482,7 +3971,8 @@ public final class TableManager implements Listener, WagerHost {
             int index = indexInSlot(order, held);
             if (extraSlots > 0 && groupSlot == extraOnSlot) {
                 n += extraSlots;
-                if (gapIndex >= 0 && index >= gapIndex) {
+                // Only a draw asks for extra room, and it always names where the gap goes.
+                if (index >= gapIndex) {
                     index++;
                 }
             }
@@ -4493,11 +3983,7 @@ public final class TableManager implements Listener, WagerHost {
         Map<UUID, DisplayPose> otherPoses = new HashMap<>();
         int otherIndex = 0;
         int otherCount = hand.size() + extraSlots;
-        int otherGap = extraSlots > 0 ? hand.size() : -1;
         for (HandCard held : hand) {
-            if (otherGap >= 0 && otherIndex == otherGap) {
-                otherIndex++;
-            }
             float extra = pulseToken != null && pulseToken.equals(held.tokenId()) ? INSPECT_BUMP : 0f;
             // The anonymous flat fan only makes sense for a single group, so split boxes show true spots.
             if (groups > 1 || revealedCardTokens.contains(held.tokenId())) {
@@ -4563,24 +4049,17 @@ public final class TableManager implements Listener, WagerHost {
         return new HandLock(yaw, x, z, y, sitting);
     }
 
+    /** Within the game's leave distance, which is always positive, and roughly level with the felt. */
     private static boolean atTable(Player player, Table table) {
-        if (player == null || table == null) {
-            return false;
-        }
         Location origin = table.getOrigin();
         Location loc = player.getLocation();
-        if (origin == null || origin.getWorld() == null || loc.getWorld() == null
-                || !origin.getWorld().equals(loc.getWorld())) {
-            return false;
-        }
-        double leave = Cache.leaveDistanceOf(table.getGameId());
-        if (leave <= 0) {
+        if (!origin.getWorld().equals(loc.getWorld())) {
             return false;
         }
         if (Math.abs(loc.getY() - origin.getY()) > TABLE_Y_SLOP) {
             return false;
         }
-        return origin.distance(loc) <= leave;
+        return origin.distance(loc) <= Cache.leaveDistanceOf(table.getGameId());
     }
 
     private static Location lockLocation(Player player, HandLock lock) {
@@ -4606,17 +4085,15 @@ public final class TableManager implements Listener, WagerHost {
             watch.add(table.dealerId());
         }
         for (UUID playerId : watch) {
-            Player player = Bukkit.getPlayer(playerId);
-            if (player == null || !player.isOnline()) {
-                continue;
-            }
-            leaveIfAtTable(player, false);
+            // Everyone watched is online: quitting takes a player's seats, hand and shoe, and games
+            // read hands through Table.heldBy, which never makes one for somebody who has left.
+            leaveIfAtTable(Bukkit.getPlayer(playerId), false);
         }
     }
 
     private boolean stillNear(Table table, Player player) {
         Location origin = table.getOrigin();
-        return origin.getWorld() != null && player.getWorld().equals(origin.getWorld())
+        return player.getWorld().equals(origin.getWorld())
                 && origin.distance(player.getLocation()) <= Cache.leaveDistanceOf(table.getGameId());
     }
 
@@ -4630,18 +4107,20 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void leaveIfAtTable(Player player, boolean force) {
-        Table table = tableHolding(player.getUniqueId());
-        if (table != null) {
-            if (!force && stillNear(table, player)) {
-                return;
-            }
+        UUID id = player.getUniqueId();
+        Table table = tableHolding(id);
+        boolean involved = table != null;
+        if (table != null && (force || !stillNear(table, player))) {
             returnHand(table, player, !force, true);
-            return;
         }
-        Table felt = tableWhereActive(player.getUniqueId());
-        if (felt != null) {
+        // Chips can be down at several tables at once, so every one of them is checked.
+        for (Table felt : new ArrayList<>(tables.values())) {
+            if (felt == table || !felt.actives().contains(id)) {
+                continue;
+            }
+            involved = true;
             if (!force && stillNear(felt, player)) {
-                return;
+                continue;
             }
             Game game = GamesRegistry.of(felt.getGameId());
             if (game != null) {
@@ -4649,12 +4128,14 @@ public final class TableManager implements Listener, WagerHost {
                 game.onChipIn(felt, player);
             } else {
                 refundOwnedPiles(felt, player);
-                felt.actives().remove(player.getUniqueId());
+                felt.actives().remove(id);
             }
             if (felt.getHands().isEmpty()) {
                 recycleIfNeeded(felt, null);
             }
             save(felt);
+        }
+        if (involved) {
             return;
         }
         Table dealing = tableWhereDealer(player.getUniqueId());
@@ -4679,7 +4160,8 @@ public final class TableManager implements Listener, WagerHost {
                 table.actives().remove(player.getUniqueId());
             }
         }
-        if (notify && player.isOnline()) {
+        // Only the clock asks for a notice, and it skips players who are offline.
+        if (notify) {
             player.sendMessage(Messages.get("hand.returned"));
         }
     }
@@ -4690,7 +4172,7 @@ public final class TableManager implements Listener, WagerHost {
         layoutHoldUntil.remove(playerId);
         selectAnimGen.merge(playerId, 1, Integer::sum);
         stopDeal(playerId, table);
-        stopRevealExtras(playerId);
+        cancelReveal(playerId);
         clearRevealed(playerId, hand);
         if (hand != null) {
             DisplayManager displays = DisplayManager.get();
@@ -4702,27 +4184,18 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void returnAllHands(Table table, boolean notify, boolean refundChips) {
+        // Quitting returns a hand straight away, so everybody still holding one is online.
         for (UUID playerId : new ArrayList<>(table.getHands().keySet())) {
-            Player owner = Bukkit.getPlayer(playerId);
-            if (owner != null) {
-                returnHand(table, owner, notify, refundChips);
-            } else {
-                discardPlayerCards(table, playerId);
-            }
+            returnHand(table, Bukkit.getPlayer(playerId), notify, refundChips);
         }
         rebuildCardStacks(table);
     }
 
+    /**
+     * Hands are never saved, and pickup and despawnWorldAll return or discard every hand before
+     * calling despawnWorld, so there is nothing in flight or on show to remove here.
+     */
     private void despawnHands(Table table) {
-        for (UUID playerId : new ArrayList<>(table.getHands().keySet())) {
-            stopDeal(playerId, table);
-        }
-        DisplayManager displays = DisplayManager.get();
-        for (List<HandCard> hand : table.getHands().values()) {
-            for (HandCard held : hand) {
-                displays.despawn(held.tokenId());
-            }
-        }
         table.getHands().clear();
     }
 
@@ -4730,8 +4203,7 @@ public final class TableManager implements Listener, WagerHost {
         double minSq = MIN_DISTANCE * MIN_DISTANCE;
         for (Table table : tables.values()) {
             Location other = table.getOrigin();
-            if (other.getWorld() != null && other.getWorld().equals(origin.getWorld())
-                    && other.distanceSquared(origin) < minSq) {
+            if (other.getWorld().equals(origin.getWorld()) && other.distanceSquared(origin) < minSq) {
                 return true;
             }
         }
@@ -4784,7 +4256,7 @@ public final class TableManager implements Listener, WagerHost {
         data.id = table.getId().toString();
         data.gameId = table.getGameId();
         Location origin = table.getOrigin();
-        data.world = origin.getWorld() != null ? origin.getWorld().getName() : "";
+        data.world = origin.getWorld().getName();
         data.x = origin.getX();
         data.y = origin.getY();
         data.z = origin.getZ();
@@ -4820,7 +4292,13 @@ public final class TableManager implements Listener, WagerHost {
         return data;
     }
 
-    private static Table fromData(TableData data) {
+    private static Table fromData(TableData data, List<Stake> unowned) {
+        UUID tableId;
+        try {
+            tableId = UUID.fromString(data.id);
+        } catch (IllegalArgumentException ex) {
+            throw new JsonParseException("Invalid table id: " + data.id, ex);
+        }
         World world = Bukkit.getWorld(data.world);
         if (world == null) {
             Games.plugin.getLogger().warning("[Games] Table world missing: " + data.world);
@@ -4832,10 +4310,13 @@ public final class TableManager implements Listener, WagerHost {
             return null;
         }
         Location origin = new Location(world, data.x, data.y, data.z, data.yaw, 0f);
-        Table table = new Table(UUID.fromString(data.id), data.gameId, origin, data.yaw, deck.get());
+        Table table = new Table(tableId, data.gameId, origin, data.yaw, deck.get());
         table.setStreet(data.street > 0 ? data.street : 1);
         if (data.actives != null) {
             for (String raw : data.actives) {
+                if (raw == null) {
+                    continue;
+                }
                 try {
                     table.actives().add(UUID.fromString(raw));
                 } catch (IllegalArgumentException ignored) {
@@ -4845,7 +4326,7 @@ public final class TableManager implements Listener, WagerHost {
         }
         if (data.ledger != null) {
             for (StakeData raw : data.ledger) {
-                readStakeData(table, raw);
+                readStakeData(table, raw, unowned);
             }
         }
         applyHouseData(table, data);
@@ -4856,9 +4337,9 @@ public final class TableManager implements Listener, WagerHost {
      * Files written before the ledger stored the money in the piles themselves, with the tray
      * decided by position. Read that once so no table loses value on the upgrade.
      */
-    private void migrateLegacyPiles(Table table, TableData data) {
-        if (table == null || data == null || data.piles == null || data.piles.isEmpty()
-                || !table.ledger().isEmpty()) {
+    private void migrateLegacyPiles(Table table, TableData data, List<Stake> unowned) {
+        if (data.piles == null || data.piles.isEmpty()
+                || (data.ledger != null && !data.ledger.isEmpty())) {
             return;
         }
         int moved = 0;
@@ -4879,11 +4360,15 @@ public final class TableManager implements Listener, WagerHost {
                     owner = null;
                 }
             }
+            if (owner == null) {
+                unowned.add(new Stake(item, raw.typeKey, raw.denars, raw.count, raw.streetId));
+                continue;
+            }
             Location at = table.getOrigin().clone();
             at.setX(raw.x);
             at.setZ(raw.z);
             // The tray used to be decided by where the pile sat.
-            UUID bucket = owner == null || inTrayZone(table, at) ? table.getId() : owner;
+            UUID bucket = inTrayZone(table, at) ? table.getId() : owner;
             // Old piles each carried their own spot, so they keep it rather than being laid out again.
             wager().restore(table, bucket, item, raw.typeKey, raw.denars, raw.count, raw.streetId,
                     raw.x, raw.z, raw.x, raw.z);
@@ -4897,9 +4382,6 @@ public final class TableManager implements Listener, WagerHost {
     /** What the file on disk claims this table was holding, ledger entries and old piles alike. */
     private static int storedDenars(TableData data) {
         int sum = 0;
-        if (data == null) {
-            return 0;
-        }
         if (data.ledger != null && !data.ledger.isEmpty()) {
             for (StakeData stake : data.ledger) {
                 if (stake != null && stake.unit > 0 && stake.count > 0) {
@@ -4919,8 +4401,9 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private static StakeData toStakeData(Table table, UUID owner, Stake stake) {
+        // The ledger never holds an empty stake or one without an item, so only encoding can fail.
         String item = encodeItem(stake.item());
-        if (item == null || stake.count() < 1) {
+        if (item == null) {
             return null;
         }
         StakeData data = new StakeData();
@@ -4941,18 +4424,25 @@ public final class TableManager implements Listener, WagerHost {
         return data;
     }
 
-    private static void readStakeData(Table table, StakeData data) {
-        if (data == null || data.item == null || data.owner == null || data.unit < 1 || data.count < 1) {
+    private static void readStakeData(Table table, StakeData data, List<Stake> unowned) {
+        if (data == null || data.item == null || data.unit < 1 || data.count < 1) {
             return;
         }
-        UUID owner;
-        try {
-            owner = UUID.fromString(data.owner);
-        } catch (IllegalArgumentException ignored) {
-            return;
+        UUID owner = null;
+        if (data.owner != null) {
+            try {
+                owner = UUID.fromString(data.owner);
+            } catch (IllegalArgumentException ignored) {
+                // Decoded items remain recoverable even when their owner cannot be identified.
+            }
         }
         ItemStack item = decodeItem(data.item);
         if (item == null) {
+            return;
+        }
+        if (owner == null) {
+            item.setAmount(1);
+            unowned.add(new Stake(item, data.typeKey, data.unit, data.count, data.streetId));
             return;
         }
         WagerEngine.get().restore(table, owner, item, data.typeKey, data.unit, data.count,
@@ -4962,9 +4452,6 @@ public final class TableManager implements Listener, WagerHost {
     // Preserve the existing serialized item format so previously saved graves remain readable.
     @SuppressWarnings("deprecation")
     private static String encodeItem(ItemStack item) {
-        if (item == null) {
-            return null;
-        }
         try (ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 BukkitObjectOutputStream out = new BukkitObjectOutputStream(bytes)) {
             out.writeObject(item);
@@ -4979,7 +4466,8 @@ public final class TableManager implements Listener, WagerHost {
     // Preserve the existing serialized item format so previously saved graves remain readable.
     @SuppressWarnings("deprecation")
     private static ItemStack decodeItem(String raw) {
-        if (raw == null || raw.isBlank()) {
+        // Both callers skip entries with no item at all, but a saved file can still hold "".
+        if (raw.isBlank()) {
             return null;
         }
         try (ByteArrayInputStream bytes = new ByteArrayInputStream(Base64.getDecoder().decode(raw));

@@ -21,11 +21,9 @@ public final class RoundMoney {
         if (value < 1) {
             return;
         }
-        if (from instanceof PlayerAccount && to != null && to.onFelt()) {
-            UUID owner = from.flightTarget();
-            if (owner != null) {
-                moneyIn.merge(owner, value, Integer::sum);
-            }
+        if (from instanceof PlayerAccount && to.onFelt()) {
+            // A player's pockets can only give money while they are online, so the owner is known.
+            moneyIn.merge(from.flightTarget(), value, Integer::sum);
         }
         if (to instanceof PlayerAccount) {
             UUID owner = to.flightTarget();
@@ -36,16 +34,10 @@ public final class RoundMoney {
     }
 
     public int moneyIn(UUID owner) {
-        if (owner == null) {
-            return 0;
-        }
         return moneyIn.getOrDefault(owner, 0);
     }
 
     public int moneyOut(UUID owner) {
-        if (owner == null) {
-            return 0;
-        }
         return moneyOut.getOrDefault(owner, 0);
     }
 
@@ -59,16 +51,13 @@ public final class RoundMoney {
      * {@link #moneyOut} so multi-street pots only tax what is left after earlier payouts.
      */
     public int taxableProfit(UUID owner, int payout) {
-        if (owner == null || payout < 1) {
-            return 0;
-        }
         int stakeBack = Math.min(payout, Math.max(0, moneyIn(owner) - moneyOut(owner)));
         return Math.max(0, payout - stakeBack);
     }
 
     /** Remember a pre-tax profit payout so the round can be announced once at the end. */
     public void recordProfit(UUID owner, int profit) {
-        if (owner == null || profit < 1) {
+        if (profit < 1) {
             return;
         }
         wonProfit.merge(owner, profit, Integer::sum);

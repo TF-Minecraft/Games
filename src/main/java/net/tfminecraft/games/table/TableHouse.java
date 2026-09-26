@@ -26,10 +26,8 @@ public final class TableHouse {
 
     public static TableHouse forPlace(Player player, TableLayout layout) {
         TableHouse house = new TableHouse();
-        if (player != null) {
-            house.ownerPlayer = player.getUniqueId();
-        }
-        boolean staff = player != null && player.hasPermission(STAFF_PERM);
+        house.ownerPlayer = player.getUniqueId();
+        boolean staff = player.hasPermission(STAFF_PERM);
         boolean yamlAuto = layout != null && layout.autoDealer();
         if (staff && yamlAuto) {
             house.autoDealer = true;
@@ -53,9 +51,6 @@ public final class TableHouse {
 
     public static TableHouse from(Table table) {
         TableHouse house = new TableHouse();
-        if (table == null) {
-            return house;
-        }
         house.ownerPlayer = table.ownerPlayer();
         house.ownerGuildId = table.ownerGuildId();
         house.autoDealer = table.autoDealer();
@@ -70,9 +65,6 @@ public final class TableHouse {
     }
 
     public void apply(Table table) {
-        if (table == null) {
-            return;
-        }
         table.setOwnerPlayer(ownerPlayer);
         table.setOwnerGuildId(ownerGuildId);
         table.setAutoDealer(autoDealer);
@@ -151,11 +143,11 @@ public final class TableHouse {
     }
 
     public ShufflePolicy shufflePolicy() {
-        return shufflePolicy != null ? shufflePolicy : ShufflePolicy.SHOE;
+        return shufflePolicy;
     }
 
     public void setShufflePolicy(ShufflePolicy shufflePolicy) {
-        this.shufflePolicy = shufflePolicy != null ? shufflePolicy : ShufflePolicy.SHOE;
+        this.shufflePolicy = shufflePolicy;
     }
 
     public int smallBlind() {

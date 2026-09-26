@@ -22,11 +22,8 @@ public final class CardSelector {
             return null;
         }
         Vector origin = player.getEyeLocation().toVector();
+        // A location's direction is always a unit vector.
         Vector look = player.getEyeLocation().getDirection();
-        if (look.lengthSquared() < 1e-8) {
-            return null;
-        }
-        look.normalize();
         double range = Cache.handSelectRange;
         double radiusSq = Cache.handSelectRadius * Cache.handSelectRadius;
         HandCard best = null;

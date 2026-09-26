@@ -53,21 +53,11 @@ public final class ChipItems {
      * are worth 0 here even when they have a declared value on the felt.
      */
     public static int moneyValue(Stake stake) {
-        if (stake == null || stake.count() < 1) {
-            return 0;
-        }
-        ItemStack item = stake.item();
-        if (item != null) {
-            return isMoneyCoin(item) ? stake.value() : 0;
-        }
-        return moneyValueFromTypeKey(stake.typeKey(), stake.unit(), stake.count());
+        return isMoneyCoin(stake.item()) ? stake.value() : 0;
     }
 
     /** Sum of {@link #moneyValue(Stake)} over a collection. */
     public static int moneyValue(Collection<Stake> stakes) {
-        if (stakes == null || stakes.isEmpty()) {
-            return 0;
-        }
         int sum = 0;
         for (Stake stake : stakes) {
             sum += moneyValue(stake);
@@ -75,19 +65,8 @@ public final class ChipItems {
         return sum;
     }
 
-    /** For tests and saved stakes with no item stack: gold, silver, and coin: keys only. */
-    private static int moneyValueFromTypeKey(String typeKey, int unit, int count) {
-        if (typeKey == null || unit < 1 || count < 1) {
-            return 0;
-        }
-        if ("gold".equals(typeKey) || "silver".equals(typeKey) || typeKey.startsWith("coin:")) {
-            return unit * count;
-        }
-        return 0;
-    }
-
     public static boolean needsDeclaredValue(ItemStack stack) {
-        if (stack == null || stack.getType() == Material.AIR || stack.getAmount() <= 0) {
+        if (stack == null || stack.getType() == Material.AIR) {
             return false;
         }
         if (integerDenars(stack).isPresent() || decoChips(stack) != null) {
@@ -198,9 +177,6 @@ public final class ChipItems {
                 return null;
             }
             int pieces = (int) Math.round(value / GOLD_DENARS);
-            if (pieces < 1) {
-                return null;
-            }
             return new DecoChips(Cache.wagerGold.style(base, 1), pieces, pieces);
         }
         if (Cache.wagerSilver == null) {
@@ -230,9 +206,6 @@ public final class ChipItems {
         Coin coin = coinOf(stack);
         if (coin != null && coin.getId() != null) {
             return "coin:" + coin.getId();
-        }
-        if (stack == null) {
-            return "air";
         }
         return "mat:" + stack.getType().name();
     }

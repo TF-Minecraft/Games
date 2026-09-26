@@ -150,8 +150,8 @@ public class Games extends JavaPlugin {
                     + " table.board-offset=" + Cache.tableBoardOffset
                     + " table.recycle-ticks=" + Cache.tableRecycleTicks
                     + " wager.min-players=" + Cache.wagerMinPlayers
-                    + " wager.gold=" + (Cache.wagerGold != null ? Cache.wagerGold.item() : "none")
-                    + " wager.silver=" + (Cache.wagerSilver != null ? Cache.wagerSilver.item() : "none")
+                    + " wager.gold=" + Cache.wagerGold.item()
+                    + " wager.silver=" + Cache.wagerSilver.item()
                     + " wager.items=" + Cache.wagerItems.size()
                     + " poker.rank-values=" + Cache.gameRankValues
                     + " catalog=" + CardLoader.cardCount());
@@ -191,15 +191,9 @@ public class Games extends JavaPlugin {
         if (target.exists()) {
             return;
         }
-        File parent = target.getParentFile();
-        if (parent != null) {
-            parent.mkdirs();
-        }
+        target.getParentFile().mkdirs();
+        // Every default file is bundled in the plugin jar.
         try (InputStream in = getResource(relativePath)) {
-            if (in == null) {
-                getLogger().warning("Missing bundled resource: " + relativePath);
-                return;
-            }
             Files.copy(in, target.toPath());
         } catch (IOException ex) {
             getLogger().severe("Failed to copy default resource " + relativePath + ": " + ex.getMessage());

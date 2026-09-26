@@ -22,7 +22,7 @@ public final class TableOptionsHolder implements InventoryHolder {
         this.requireDeck = requireDeck;
         this.pendingHit = pendingHit != null ? pendingHit.clone() : null;
         this.editTableId = editTableId;
-        this.gameId = gameId != null ? gameId : "blackjack";
+        this.gameId = gameId;
         this.house = house;
     }
 

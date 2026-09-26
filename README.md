@@ -21,6 +21,30 @@ It supports both structured games with managed rounds and a free-play table for 
 
 Technical documentation is maintained in [TF-Minecraft/Docs](https://github.com/TF-Minecraft/Docs).
 
+## Tests and coverage
+
+After installing the pinned plugin dependencies used by the build workflow, run
+`mvn clean verify` with Java 21. JUnit tests use MockBukkit for Paper registries,
+worlds, players, and inventories, and Mockito for external plugin and packet
+boundaries. Game scenarios exercise public callbacks and assert game rules,
+money conservation, or player-visible effects.
+
+JaCoCo measures all production classes, with no exclusions, and writes HTML, XML,
+and CSV reports to `target/site/jacoco/`. Open `target/site/jacoco/index.html` to
+inspect uncovered behaviour. The build workflow uploads the coverage report
+alongside test results. Coverage data is replaced on each test run; use the full
+suite when assessing repository-wide coverage.
+
+The suite covers every production line and branch. Tests should protect
+supported behaviour, not create impossible internal states merely to execute a
+branch. Where a branch cannot be reached through any real caller, remove it
+rather than force it.
+
+The suite includes complete Poker, Draw and Blackjack rounds across the real
+table, deck, and money implementations. Packet tests verify ProtocolLib requests
+through mocked external boundaries; packet encoding and client rendering still
+require a real-server integration run.
+
 ## License
 
 Copyright (c) 2026 TF-Minecraft contributors.

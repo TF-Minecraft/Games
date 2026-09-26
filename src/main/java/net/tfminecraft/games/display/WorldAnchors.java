@@ -86,7 +86,7 @@ public final class WorldAnchors {
             return;
         }
         Entity entity = Bukkit.getEntity(entityId);
-        if (entity instanceof TextDisplay display && !display.isDead()) {
+        if (entity instanceof TextDisplay display) {
             display.setSeeThrough(false);
             display.setText(text != null ? text : "");
         }
@@ -97,7 +97,7 @@ public final class WorldAnchors {
             return;
         }
         Entity entity = Bukkit.getEntity(entityId);
-        if (entity != null && !entity.isDead()) {
+        if (entity != null) {
             entity.teleport(location);
         }
     }
@@ -107,7 +107,7 @@ public final class WorldAnchors {
             return;
         }
         Entity entity = Bukkit.getEntity(entityId);
-        if (entity != null && !entity.isDead()) {
+        if (entity != null) {
             entity.remove();
         }
     }

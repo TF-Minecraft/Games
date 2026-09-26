@@ -92,6 +92,18 @@ class CoinPlannerTest {
     }
 
     @Test
+    void bestWithNothingToReachIsZero() {
+        assertEquals(0, CoinPlanner.best(live(1, 1, 1, 1), 0));
+        assertEquals(0, CoinPlanner.best(live(1, 1, 1, 1), -5));
+    }
+
+    @Test
+    void worthlessCoinsAreIgnoredWhenEstimatingVeryLargeAmounts() {
+        List<Slot> slots = List.of(new Slot(0, 5), new Slot(1_000_000, 5));
+        assertEquals(4_000_000, CoinPlanner.best(slots, 4_500_000));
+    }
+
+    @Test
     void bestCopesWithManyCoins() {
         assertEquals(5000, CoinPlanner.best(live(0, 0, 0, 20000), 5000));
     }

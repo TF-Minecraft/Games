@@ -1,9 +1,11 @@
 package net.tfminecraft.games.gui;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.IntConsumer;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -56,16 +58,12 @@ public final class TableOptionsGui implements Listener {
     }
 
     public static void openPlace(Player player, boolean requireDeck, Location pending, String gameId) {
-        String id = gameId != null ? gameId : "blackjack";
-        TableLayout layout = Cache.layoutOf(id);
+        TableLayout layout = Cache.layoutOf(gameId);
         TableHouse house = TableHouse.forPlace(player, layout);
-        open(player, requireDeck, pending, null, id, house);
+        open(player, requireDeck, pending, null, gameId, house);
     }
 
     public static void openEdit(Player player, Table table) {
-        if (player == null || table == null) {
-            return;
-        }
         open(player, false, null, table.getId(), table.getGameId(), TableHouse.from(table));
     }
 
@@ -73,9 +71,6 @@ public final class TableOptionsGui implements Listener {
     @SuppressWarnings("deprecation")
     private static void open(Player player, boolean requireDeck, Location pending, UUID editId, String gameId,
             TableHouse house) {
-        if (player == null || house == null) {
-            return;
-        }
         prompts.remove(player.getUniqueId());
         TableOptionsHolder holder = new TableOptionsHolder(requireDeck, pending, editId, gameId, house);
         Inventory inventory = Bukkit.createInventory(holder, SIZE, Messages.get("place.options_title"));
@@ -127,7 +122,7 @@ public final class TableOptionsGui implements Listener {
     }
 
     private static boolean isPoker(String gameId) {
-        return gameId != null && "poker".equalsIgnoreCase(gameId);
+        return "poker".equalsIgnoreCase(gameId);
     }
 
     private static String boxesLabel(int n) {
@@ -139,10 +134,8 @@ public final class TableOptionsGui implements Listener {
     private static ItemStack toggle(Material material, String action, boolean on, String name, String lore) {
         ItemStack item = named(material, action, name);
         ItemMeta meta = item.getItemMeta();
-        if (meta != null) {
-            meta.setLore(List.of(lore));
-            item.setItemMeta(meta);
-        }
+        meta.setLore(List.of(lore));
+        item.setItemMeta(meta);
         return item;
     }
 
@@ -151,10 +144,8 @@ public final class TableOptionsGui implements Listener {
     private static ItemStack valueItem(Material material, String action, String name) {
         ItemStack item = named(material, action, name);
         ItemMeta meta = item.getItemMeta();
-        if (meta != null) {
-            meta.setLore(List.of(Messages.get("place.options_chat")));
-            item.setItemMeta(meta);
-        }
+        meta.setLore(List.of(Messages.get("place.options_chat")));
+        item.setItemMeta(meta);
         return item;
     }
 
@@ -163,11 +154,9 @@ public final class TableOptionsGui implements Listener {
     private static ItemStack named(Material material, String action, String name) {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(name);
-            meta.getPersistentDataContainer().set(Keys.guiAction(), PersistentDataType.STRING, action);
-            item.setItemMeta(meta);
-        }
+        meta.setDisplayName(name);
+        meta.getPersistentDataContainer().set(Keys.guiAction(), PersistentDataType.STRING, action);
+        item.setItemMeta(meta);
         return item;
     }
 
@@ -177,9 +166,8 @@ public final class TableOptionsGui implements Listener {
             return;
         }
         event.setCancelled(true);
-        if (!(event.getWhoClicked() instanceof Player player)) {
-            return;
-        }
+        // Only players can open this menu.
+        Player player = (Player) event.getWhoClicked();
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
             return;
         }
@@ -187,57 +175,45 @@ public final class TableOptionsGui implements Listener {
         if (clicked == null || !clicked.hasItemMeta()) {
             return;
         }
-        String action = clicked.getItemMeta().getPersistentDataContainer()
-                .get(Keys.guiAction(), PersistentDataType.STRING);
-        if (action == null) {
-            return;
-        }
+        // Every item this menu shows carries one of its own actions.
+        Action action = Action.valueOf(clicked.getItemMeta().getPersistentDataContainer()
+                .get(Keys.guiAction(), PersistentDataType.STRING).toUpperCase(Locale.ROOT));
         TableHouse house = holder.house();
         boolean staff = player.hasPermission(TableHouse.STAFF_PERM);
-        switch (action) {
-            case "auto" -> house.setAutoDealer(!house.autoDealer());
-            case "mint" -> {
+        boolean redraw = switch (action) {
+            case AUTO -> {
+                house.setAutoDealer(!house.autoDealer());
+                yield true;
+            }
+            case MINT -> {
                 if (staff) {
                     house.setStaffMint(!house.staffMint());
                 }
+                yield true;
             }
-            case "min" -> {
-                startChat(player, holder, ChatField.MIN);
-                return;
+            case SHUFFLE -> {
+                house.setShufflePolicy(house.shufflePolicy().next());
+                yield true;
             }
-            case "max" -> {
-                startChat(player, holder, ChatField.MAX);
-                return;
+            case MIN, MAX, SMALL, BIG, BOXES -> {
+                startChat(player, holder, ChatField.valueOf(action.name()));
+                yield false;
             }
-            case "small" -> {
-                startChat(player, holder, ChatField.SMALL);
-                return;
-            }
-            case "big" -> {
-                startChat(player, holder, ChatField.BIG);
-                return;
-            }
-            case "boxes" -> {
-                startChat(player, holder, ChatField.BOXES);
-                return;
-            }
-            case "shuffle" -> house.setShufflePolicy(house.shufflePolicy().next());
-            case "confirm" -> {
+            case CONFIRM -> {
                 GuiSounds.click(player);
                 confirm(player, holder);
-                return;
+                yield false;
             }
-            case "cancel" -> {
+            case CANCEL -> {
                 GuiSounds.click(player);
                 player.closeInventory();
-                return;
+                yield false;
             }
-            default -> {
-                return;
-            }
+        };
+        if (redraw) {
+            GuiSounds.click(player);
+            fill(player, holder);
         }
-        GuiSounds.click(player);
-        fill(player, holder);
     }
 
     private static void startChat(Player player, TableOptionsHolder holder, ChatField field) {
@@ -253,11 +229,9 @@ public final class TableOptionsGui implements Listener {
             if (still != prompt) {
                 return;
             }
+            // Quitting clears the prompt, so a prompt that is still waiting belongs to an online player.
             prompts.remove(id);
-            Player online = Bukkit.getPlayer(id);
-            if (online != null && online.isOnline()) {
-                online.sendMessage(Messages.get("place.options_chat_timeout"));
-            }
+            Bukkit.getPlayer(id).sendMessage(Messages.get("place.options_chat_timeout"));
         }, CHAT_TICKS);
     }
 
@@ -271,7 +245,7 @@ public final class TableOptionsGui implements Listener {
         }
         event.setCancelled(true);
         Player player = event.getPlayer();
-        String raw = event.getMessage() == null ? "" : event.getMessage().trim();
+        String raw = event.getMessage().trim();
         Bukkit.getScheduler().runTask(Games.plugin, () -> applyChat(player, prompt, raw));
     }
 
@@ -302,37 +276,32 @@ public final class TableOptionsGui implements Listener {
         TableLayout layout = Cache.layoutOf(prompt.gameId);
         boolean staff = player.hasPermission(TableHouse.STAFF_PERM);
         TableHouse house = prompt.house;
-        switch (prompt.field) {
-            case MIN -> house.setMinBet(clampMin(value, staff, layout, house.maxBet()));
-            case MAX -> house.setMaxBet(clampMax(value, staff, layout, house.minBet()));
-            case BOXES -> house.setMaxBoxes(clampBoxes(value, staff, layout));
-            case SMALL -> {
-                if (value < 0 || !blindsOk(value, house.bigBlind())) {
-                    player.sendMessage(Messages.get(value < 0 ? "place.options_chat_invalid"
-                            : "place.options_chat_blinds"));
-                    reopen(player, prompt);
-                    return;
-                }
-                house.setSmallBlind(value);
+        String refusal = switch (prompt.field) {
+            case MIN -> {
+                house.setMinBet(clampMin(value, staff, layout, house.maxBet()));
+                yield null;
             }
-            case BIG -> {
-                if (value < 0 || !blindsOk(house.smallBlind(), value)) {
-                    player.sendMessage(Messages.get(value < 0 ? "place.options_chat_invalid"
-                            : "place.options_chat_blinds"));
-                    reopen(player, prompt);
-                    return;
-                }
-                house.setBigBlind(value);
+            case MAX -> {
+                house.setMaxBet(clampMax(value, staff, layout, house.minBet()));
+                yield null;
             }
+            case BOXES -> {
+                house.setMaxBoxes(clampBoxes(value, staff, layout));
+                yield null;
+            }
+            case SMALL -> setBlind(value, value, house.bigBlind(), house::setSmallBlind);
+            case BIG -> setBlind(value, house.smallBlind(), value, house::setBigBlind);
+        };
+        if (refusal != null) {
+            player.sendMessage(Messages.get(refusal));
+            reopen(player, prompt);
+            return;
         }
         GuiSounds.click(player);
         reopen(player, prompt);
     }
 
     private static void reopen(Player player, ChatPrompt prompt) {
-        if (player == null || !player.isOnline()) {
-            return;
-        }
         open(player, prompt.requireDeck, prompt.pending, prompt.editId, prompt.gameId, prompt.house);
     }
 
@@ -378,6 +347,18 @@ public final class TableOptionsGui implements Listener {
         player.sendMessage(Messages.get(holder.requireDeck() ? "place.armed" : "place.armed_admin"));
     }
 
+    /** Sets a blind when the pair stays valid; otherwise the messages.yml key explaining why not. */
+    private static String setBlind(int value, int small, int big, IntConsumer set) {
+        if (value < 0) {
+            return "place.options_chat_invalid";
+        }
+        if (!blindsOk(small, big)) {
+            return "place.options_chat_blinds";
+        }
+        set.accept(value);
+        return null;
+    }
+
     private static boolean blindsOk(int small, int big) {
         if (small < 1 || big < 1) {
             return true;
@@ -390,7 +371,7 @@ public final class TableOptionsGui implements Listener {
         if (!staff && layout != null) {
             floor = Math.max(1, layout.minBet());
         }
-        int ceil = maxBet > 0 ? maxBet : Integer.MAX_VALUE;
+        int ceil = maxBet;
         if (!staff && layout != null && layout.maxBet() > 0) {
             ceil = Math.min(ceil, layout.maxBet());
         }
@@ -422,6 +403,20 @@ public final class TableOptionsGui implements Listener {
         if (event.getInventory().getHolder() instanceof TableOptionsHolder) {
             event.setCancelled(true);
         }
+    }
+
+    /** What an item in the menu does, stored on the item in lower case. */
+    private enum Action {
+        AUTO,
+        MINT,
+        MIN,
+        MAX,
+        BOXES,
+        SHUFFLE,
+        SMALL,
+        BIG,
+        CONFIRM,
+        CANCEL
     }
 
     private enum ChatField {

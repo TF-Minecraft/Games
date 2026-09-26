@@ -8,13 +8,11 @@ import com.comphenix.protocol.ProtocolManager;
 
 public final class ProtocolLibBridge {
 
-    private static boolean ready;
     private static FakeItemDisplayPackets packets;
 
     private ProtocolLibBridge() {}
 
     public static void init(Plugin plugin) {
-        ready = false;
         packets = null;
         if (Bukkit.getPluginManager().getPlugin("ProtocolLib") == null) {
             plugin.getLogger().warning("[Games] ProtocolLib not found - display engine disabled.");
@@ -23,7 +21,6 @@ public final class ProtocolLibBridge {
         try {
             ProtocolManager manager = ProtocolLibrary.getProtocolManager();
             packets = new FakeItemDisplayPackets(manager);
-            ready = true;
             plugin.getLogger().info("[Games] ProtocolLib detected - packet ItemDisplays enabled.");
         } catch (Exception ex) {
             plugin.getLogger().warning("[Games] Failed to initialize ProtocolLib: " + ex.getMessage());
@@ -31,7 +28,7 @@ public final class ProtocolLibBridge {
     }
 
     public static boolean isReady() {
-        return ready && packets != null;
+        return packets != null;
     }
 
     public static FakeItemDisplayPackets getPackets() {
@@ -39,7 +36,6 @@ public final class ProtocolLibBridge {
     }
 
     public static void shutdown() {
-        ready = false;
         packets = null;
     }
 }

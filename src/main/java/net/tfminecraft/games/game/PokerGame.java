@@ -50,19 +50,17 @@ public final class PokerGame implements Game {
 
     @Override
     public boolean allowFreeDraw(Table table, Player player) {
-        return table != null && !table.live();
+        return !table.live();
     }
 
     @Override
     public boolean allowReturnSelected(Table table, Player player) {
-        return table != null && !table.live();
+        return !table.live();
     }
 
+    /** TableManager only offers the shoe for claiming while the table is idle. */
     @Override
     public boolean tryClaimDealer(Table table, Player player) {
-        if (table == null || player == null || table.live()) {
-            return false;
-        }
         if (!table.actives().contains(player.getUniqueId())) {
             return false;
         }
@@ -75,9 +73,6 @@ public final class PokerGame implements Game {
 
     @Override
     public void onSessionStart(Table table) {
-        if (table == null) {
-            return;
-        }
         List<Player> online = seatedOnline(table);
         if (online.size() < 2) {
             for (Player player : online) {
@@ -98,9 +93,6 @@ public final class PokerGame implements Game {
 
     @Override
     public void onSessionEnd(Table table) {
-        if (table == null) {
-            return;
-        }
         streets.remove(table.getId());
         TableManager manager = TableManager.get();
         for (UUID id : new ArrayList<>(table.getHands().keySet())) {
@@ -111,31 +103,25 @@ public final class PokerGame implements Game {
 
     @Override
     public void onTableRemoved(Table table) {
-        if (table != null) {
-            streets.remove(table.getId());
-        }
+        streets.remove(table.getId());
     }
 
+    /**
+     * A street exists from the first bet until the hand is settled, and the turn only ever
+     * belongs to a seat while it does. An idle table has no phase.
+     */
     @Override
     public boolean allowPlayChat(Table table, Player player) {
-        return table != null && player != null && table.live()
-                && bettingPhase(table.phase())
-                && player.getUniqueId().equals(table.actor());
+        UUID id = player.getUniqueId();
+        // A leaver stays the actor until their refund lands, but can no longer act.
+        return bettingPhase(table.phase()) && id.equals(table.actor()) && table.actives().contains(id);
     }
 
+    /** TableManager hands words only to the actor that allowPlayChat accepted. */
     @Override
     public void onPlayWord(Table table, Player player, String word) {
-        if (table == null || player == null || word == null) {
-            return;
-        }
         Street street = streets.get(table.getId());
-        if (street == null || !table.live()) {
-            return;
-        }
         UUID id = player.getUniqueId();
-        if (street.folded.contains(id)) {
-            return;
-        }
         int contrib = streetContrib(table, id);
         switch (word) {
             case "check" -> {
@@ -173,21 +159,16 @@ public final class PokerGame implements Game {
             }
         }
         street.acted.add(id);
-        finishOrAdvance(table, true);
+        finishOrAdvance(table, new ArrayList<>(table.actives()), true);
     }
 
     @Override
     public void onFeltPilesChanged(Table table) {
-        if (table != null) {
-            TableManager.get().refreshLabel(table);
-        }
+        TableManager.get().refreshLabel(table);
     }
 
     @Override
     public void onChipIn(Table table, Player player) {
-        if (table == null || player == null) {
-            return;
-        }
         if (table.dealerId() == null) {
             table.setDealerId(player.getUniqueId());
         }
@@ -208,96 +189,45 @@ public final class PokerGame implements Game {
 
     @Override
     public String extraLabel(Table table) {
-        if (table == null) {
-            return "";
-        }
-        StringBuilder text = new StringBuilder();
+        List<String> lines = new ArrayList<>();
         int small = table.smallBlind();
         int big = table.bigBlind();
         if (small > 0 || big > 0) {
-            text.append(Messages.get("label.blinds",
+            lines.add(Messages.get("label.blinds",
                     "small", String.valueOf(small),
                     "big", String.valueOf(big)));
         }
-        if (text.length() > 0) {
-            text.append("\n");
-        }
-        text.append(Messages.get(table.shufflePolicy() == ShufflePolicy.ROUND
+        lines.add(Messages.get(table.shufflePolicy() == ShufflePolicy.ROUND
                 ? "label.shuffle_round" : "label.shuffle_shoe"));
         UUID button = table.dealerId();
         if (button != null) {
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            text.append(Messages.get("label.button", "name", RpNames.of(button)));
+            lines.add(Messages.get("label.button", "name", RpNames.of(button)));
         }
         if (table.live()) {
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            text.append(streetLabel(table.phase()));
+            lines.add(streetLabel(table.phase()));
             UUID actor = table.actor();
             if (actor != null) {
-                if (text.length() > 0) {
-                    text.append("\n");
-                }
-                text.append(Messages.get("label.turn", "name", RpNames.of(actor)));
+                lines.add(Messages.get("label.turn", "name", RpNames.of(actor)));
                 Street street = streets.get(table.getId());
-                int toCall = 0;
-                if (street != null) {
-                    toCall = Math.max(0, street.currentBet - streetContrib(table, actor));
-                }
-                if (text.length() > 0) {
-                    text.append("\n");
-                }
-                text.append(Messages.get("label.holdem_tocall", "n", String.valueOf(toCall)));
+                int toCall = Math.max(0, street.currentBet - streetContrib(table, actor));
+                lines.add(Messages.get("label.holdem_tocall", "n", String.valueOf(toCall)));
             }
         }
         String pot = PotLabel.lines(table);
         if (!pot.isEmpty()) {
-            if (text.length() > 0) {
-                text.append("\n");
-            }
-            text.append(pot);
+            lines.add(pot);
         }
-        return text.toString();
+        return String.join("\n", lines);
     }
 
     void passButton(Table table) {
-        passButton(table, table != null ? table.dealerId() : null);
-    }
-
-    void passButton(Table table, UUID from) {
-        if (table == null) {
-            return;
-        }
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        if (from != null && seats.contains(from)) {
-            int i = seats.indexOf(from);
-            table.setDealerId(seats.get((i + 1) % seats.size()));
-            return;
-        }
-        table.setDealerId(seats.get(0));
+        table.setDealerId(SeatOrder.next(table, table.dealerId()));
     }
 
     private void ensureButton(Table table) {
-        if (table == null) {
-            return;
+        if (!table.actives().contains(table.dealerId())) {
+            table.setDealerId(SeatOrder.next(table, null));
         }
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        UUID have = table.dealerId();
-        if (have != null && seats.contains(have)) {
-            return;
-        }
-        table.setDealerId(seats.get(0));
     }
 
     @Override
@@ -314,7 +244,8 @@ public final class PokerGame implements Game {
         }
         table.actives().remove(leaver);
         if (leaver.equals(table.dealerId())) {
-            passAfterLeave(table, before, leaver);
+            // The button goes to the next seat round from where the leaver sat.
+            table.setDealerId(SeatOrder.first(SeatOrder.after(before, leaver), table.actives()::contains));
         }
         TableManager.get().refreshLabel(table);
         int streetId = table.street();
@@ -336,37 +267,16 @@ public final class PokerGame implements Game {
             if (stop) {
                 TableManager.get().endSession(table);
             } else {
-                finishOrAdvance(table, false);
+                finishOrAdvance(table, before, false);
             }
         });
-    }
-
-    private static void passAfterLeave(Table table, List<UUID> before, UUID leaver) {
-        if (before == null || before.isEmpty()) {
-            table.setDealerId(null);
-            return;
-        }
-        int i = before.indexOf(leaver);
-        if (i < 0) {
-            table.setDealerId(table.actives().isEmpty() ? null : table.actives().iterator().next());
-            return;
-        }
-        UUID next = null;
-        for (int step = 1; step <= before.size(); step++) {
-            UUID candidate = before.get((i + step) % before.size());
-            if (!candidate.equals(leaver) && table.actives().contains(candidate)) {
-                next = candidate;
-                break;
-            }
-        }
-        table.setDealerId(next);
     }
 
     private static List<Player> seatedOnline(Table table) {
         List<Player> online = new ArrayList<>();
         for (UUID id : table.actives()) {
             Player player = Bukkit.getPlayer(id);
-            if (player != null && player.isOnline()) {
+            if (player != null) {
                 online.add(player);
             }
         }
@@ -374,20 +284,12 @@ public final class PokerGame implements Game {
     }
 
     private static List<Player> holeQueue(Table table) {
-        List<UUID> seats = new ArrayList<>(table.actives());
+        List<UUID> order = SeatOrder.leftOfButton(table);
         List<Player> queue = new ArrayList<>();
-        if (seats.isEmpty()) {
-            return queue;
-        }
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
         for (int round = 0; round < 2; round++) {
-            for (int step = 1; step <= seats.size(); step++) {
-                UUID id = seats.get((button + step) % seats.size());
+            for (UUID id : order) {
                 Player player = Bukkit.getPlayer(id);
-                if (player != null && player.isOnline()) {
+                if (player != null) {
                     queue.add(player);
                 }
             }
@@ -396,9 +298,6 @@ public final class PokerGame implements Game {
     }
 
     private void dealHoles(Table table, List<Player> queue, int index) {
-        if (table == null) {
-            return;
-        }
         Table still = TableManager.get().table(table.getId());
         if (still == null || !still.live()) {
             return;
@@ -412,9 +311,6 @@ public final class PokerGame implements Game {
     }
 
     private void startStreet(Table table) {
-        if (table == null || !table.live()) {
-            return;
-        }
         Street street = new Street();
         streets.put(table.getId(), street);
         table.setActor(leftOfButton(table, street));
@@ -441,32 +337,26 @@ public final class PokerGame implements Game {
         return Messages.get("label.holdem_preflop");
     }
 
-    private void resumeBetting(Table table) {
-        Table still = table != null ? TableManager.get().table(table.getId()) : null;
-        if (still == null || !still.live()) {
-            return;
-        }
-        Street street = streets.get(still.getId());
-        if (street == null) {
+    /** Opens betting on the street whose cards just landed. */
+    private void resumeBetting(Table table, Street street) {
+        // A hand that was settled, ended or removed during the animation takes no more bets.
+        if (streets.get(table.getId()) != street) {
             return;
         }
         street.currentBet = 0;
         street.acted.clear();
         street.capped.clear();
-        still.setActor(leftOfButton(still, street));
-        TableManager.get().refreshLabel(still);
+        table.setActor(leftOfButton(table, street));
+        TableManager.get().refreshLabel(table);
     }
 
-    private void advanceBoard(Table table) {
-        if (table == null || !table.live()) {
-            return;
-        }
+    /** Deals the next street, or goes to showdown after the river. Only called mid-hand. */
+    private void advanceBoard(Table table, Street street) {
         String phase = table.phase();
-        if (RIVER.equals(phase) || SHOWDOWN.equals(phase)) {
-            showdown(table);
+        if (RIVER.equals(phase)) {
+            showdown(table, street);
             return;
         }
-        UUID tableId = table.getId();
         int cards;
         String nextPhase;
         int nextStreet;
@@ -481,74 +371,51 @@ public final class PokerGame implements Game {
             nextStreet = 3;
             cards = 1;
             announce = "poker.turn";
-        } else if (TURN.equals(phase)) {
+        } else {
             nextPhase = RIVER;
             nextStreet = 4;
             cards = 1;
             announce = "poker.river";
-        } else {
-            TableManager.get().refreshLabel(table);
-            return;
         }
         table.setPhase(nextPhase);
         table.setStreet(nextStreet);
-        Street street = streets.get(table.getId());
-        if (street != null) {
-            street.currentBet = 0;
-            street.acted.clear();
-            street.capped.clear();
-        }
+        street.currentBet = 0;
+        street.acted.clear();
+        street.capped.clear();
         tellSeated(table, Messages.get(announce));
         TableManager.get().refreshLabel(table);
-        TableManager.get().dealToTable(table, "board", cards, true, () -> {
-            Table still = TableManager.get().table(tableId);
-            resumeBetting(still);
-        });
+        TableManager.get().dealToTable(table, "board", cards, true, () -> resumeBetting(table, street));
     }
 
+    /** The first seat after the button still betting this street. */
     private static UUID leftOfButton(Table table, Street street) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((button + step) % seats.size());
-            if (street == null || (!street.folded.contains(id) && !street.capped.contains(id))) {
-                return id;
-            }
-        }
-        return null;
+        return SeatOrder.first(SeatOrder.leftOfButton(table), id -> betting(street, id));
     }
 
-    private void showdown(Table table) {
-        if (table == null || !table.live() || SHOWDOWN.equals(table.phase())) {
-            return;
-        }
+    private static boolean betting(Street street, UUID id) {
+        return !street.folded.contains(id) && !street.capped.contains(id);
+    }
+
+    private void showdown(Table table, Street street) {
+        // Betting is over, so nothing late can settle this hand a second time.
+        streets.remove(table.getId());
         table.setPhase(SHOWDOWN);
         table.setActor(null);
         TableManager manager = TableManager.get();
         manager.refreshLabel(table);
         tellSeated(table, Messages.get("poker.showdown"));
-        Street street = streets.get(table.getId());
-        List<UUID> live = street != null ? liveSeats(table, street) : new ArrayList<>(table.actives());
-        if (live.size() <= 1) {
-            foldWin(table, live.isEmpty() ? null : live.get(0));
-            return;
-        }
+        List<UUID> live = liveSeats(table, street);
         for (UUID id : live) {
+            // A seat restored from disk can still be in the hand while offline.
             Player player = Bukkit.getPlayer(id);
-            if (player != null && player.isOnline()) {
+            if (player != null) {
                 manager.publishHand(table, player);
             }
         }
         List<Card> board = boardCards(table);
         for (String line : HandTalk.bestHand(table.getGameId(), live, id -> {
             List<Card> cards = new ArrayList<>(board);
-            cards.addAll(cardsOf(table.handOf(id)));
+            cards.addAll(cardsOf(table.heldBy(id)));
             return cards;
         })) {
             tellSeated(table, line);
@@ -573,26 +440,16 @@ public final class PokerGame implements Game {
     }
 
     private void payPots(Table table, List<UUID> live, List<Card> board, String gameId) {
-        TableManager manager = TableManager.get();
-        Map<UUID, Integer> invested = investedByOwner(table, manager);
-        TreeSet<Integer> levels = new TreeSet<>();
-        for (int put : invested.values()) {
-            if (put > 0) {
-                levels.add(put);
-            }
-        }
+        // The ledger only reports owners with money on the felt, so every total is positive.
+        Map<UUID, Integer> invested = WagerEngine.get().totalsExcept(table, table.getId());
+        TreeSet<Integer> levels = new TreeSet<>(invested.values());
         if (levels.isEmpty()) {
             finishHand(table);
             return;
         }
         List<PayoutFlight> flights = new ArrayList<>();
-        UUID leftover = null;
-        List<UUID> liveOrder = seatOrderLeftOfButton(table, live);
-        if (!liveOrder.isEmpty()) {
-            leftover = liveOrder.get(0);
-        } else if (!live.isEmpty()) {
-            leftover = live.get(0);
-        }
+        // Showdown supplies at least two live seats, all still in the seating order.
+        UUID leftover = SeatOrder.leftOfButton(table, live).getFirst();
         int previous = 0;
         for (int level : levels) {
             int covered = 0;
@@ -601,11 +458,9 @@ public final class PokerGame implements Game {
                     covered++;
                 }
             }
+            // Levels rise strictly and at least one stake reaches each, so every level holds money.
             int amount = (level - previous) * covered;
             previous = level;
-            if (amount < 1) {
-                continue;
-            }
             List<UUID> contestants = new ArrayList<>();
             for (UUID id : live) {
                 if (invested.getOrDefault(id, 0) >= level) {
@@ -616,29 +471,14 @@ public final class PokerGame implements Game {
                 continue;
             }
             List<UUID> winners = rankSeats(table, contestants, board, gameId);
-            if (winners.isEmpty()) {
-                continue;
-            }
-            leftover = winners.get(0);
+            leftover = winners.getFirst();
             announceWinners(table, winners);
-            payEven(table, manager, flights, winners, amount);
+            payEven(table, flights, winners, amount);
         }
         // Whatever the levels could not split in whole coins goes to one seat.
-        if (leftover != null) {
-            WagerEngine.get().sweepPot(table, Bukkit.getPlayer(leftover), leftover, flights, "pot remainder");
-        }
+        WagerEngine.get().sweepPot(table, Bukkit.getPlayer(leftover), leftover, flights, "pot remainder");
         WagerEngine.get().announceWins(table, "poker");
-        UUID tableId = table.getId();
-        manager.flushPiles(table, flights, () -> {
-            Table still = TableManager.get().table(tableId);
-            if (still != null) {
-                finishHand(still);
-            }
-        });
-    }
-
-    private static Map<UUID, Integer> investedByOwner(Table table, TableManager manager) {
-        return WagerEngine.get().totalsExcept(table, table.getId());
+        finishAfterPayout(table, flights);
     }
 
     private static List<UUID> rankSeats(Table table, List<UUID> contestants, List<Card> board, String gameId) {
@@ -649,7 +489,7 @@ public final class PokerGame implements Game {
         List<UUID> tied = new ArrayList<>();
         for (UUID id : contestants) {
             List<Card> cards = new ArrayList<>(board);
-            cards.addAll(cardsOf(table.handOf(id)));
+            cards.addAll(cardsOf(table.heldBy(id)));
             HoldemRank.Score score = HoldemRank.best(gameId, cards);
             if (tied.isEmpty() || score.compareTo(best) > 0) {
                 best = score;
@@ -659,15 +499,14 @@ public final class PokerGame implements Game {
                 tied.add(id);
             }
         }
-        return seatOrderLeftOfButton(table, tied);
+        return SeatOrder.leftOfButton(table, tied);
     }
 
-    /** Split one pot level between winners, as evenly as the coins on the felt allow. */
-    private static void payEven(Table table, TableManager manager, List<PayoutFlight> flights,
-            List<UUID> winners, int amount) {
-        if (amount < 1 || winners.isEmpty()) {
-            return;
-        }
+    /**
+     * Split one pot level between winners, as evenly as the coins on the felt allow. The winners
+     * are among the stakes that reach this level, so every share is at least one coin.
+     */
+    private static void payEven(Table table, List<PayoutFlight> flights, List<UUID> winners, int amount) {
         int n = winners.size();
         int share = amount / n;
         int rem = amount % n;
@@ -676,9 +515,6 @@ public final class PokerGame implements Game {
             if (rem > 0) {
                 need++;
                 rem--;
-            }
-            if (need < 1) {
-                continue;
             }
             WagerEngine.get().payFromPot(table, Bukkit.getPlayer(winner), winner, need, flights, "pot");
         }
@@ -690,43 +526,26 @@ public final class PokerGame implements Game {
         TableManager.get().refreshLabel(table);
     }
 
-    private static List<UUID> seatOrderLeftOfButton(Table table, List<UUID> include) {
-        List<UUID> ordered = new ArrayList<>();
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty() || include == null || include.isEmpty()) {
-            return ordered;
-        }
-        Set<UUID> want = new HashSet<>(include);
-        int button = seats.indexOf(table.dealerId());
-        if (button < 0) {
-            button = seats.size() - 1;
-        }
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((button + step) % seats.size());
-            if (want.contains(id)) {
-                ordered.add(id);
+    /** Ends the hand once the payout has landed, unless the table was removed meanwhile. */
+    private void finishAfterPayout(Table table, List<PayoutFlight> flights) {
+        UUID tableId = table.getId();
+        TableManager.get().flushPiles(table, flights, () -> {
+            Table still = TableManager.get().table(tableId);
+            if (still != null) {
+                finishHand(still);
             }
-        }
-        return ordered;
+        });
     }
 
     private static List<Card> cardsOf(List<HandCard> held) {
         List<Card> cards = new ArrayList<>();
-        if (held == null) {
-            return cards;
-        }
         for (HandCard card : held) {
-            if (card != null && card.card() != null) {
-                cards.add(card.card());
-            }
+            cards.add(card.card());
         }
         return cards;
     }
 
     private static int streetContrib(Table table, UUID owner) {
-        if (table == null || owner == null) {
-            return 0;
-        }
         return WagerEngine.get().owned(table, owner, table.street());
     }
 
@@ -740,71 +559,60 @@ public final class PokerGame implements Game {
         return live;
     }
 
-    private static UUID nextLive(Table table, Street street, UUID from) {
-        List<UUID> seats = new ArrayList<>(table.actives());
-        if (seats.isEmpty()) {
-            return null;
-        }
-        int i = seats.indexOf(from);
-        for (int step = 1; step <= seats.size(); step++) {
-            UUID id = seats.get((i + step) % seats.size());
-            if (!street.folded.contains(id) && !street.capped.contains(id)) {
-                return id;
-            }
-        }
-        return null;
-    }
-
+    /**
+     * Every live seat has either acted or is all in. Checking needs the current bet matched, a
+     * short call caps the seat, and a raise clears everyone else's action, so a seat that has
+     * acted has matched the bet.
+     */
     private static boolean streetComplete(Table table, Street street) {
         for (UUID id : liveSeats(table, street)) {
-            if (street.capped.contains(id)) {
-                continue;
-            }
-            if (!street.acted.contains(id) || streetContrib(table, id) < street.currentBet) {
+            if (!street.capped.contains(id) && !street.acted.contains(id)) {
                 return false;
             }
         }
-        return !liveSeats(table, street).isEmpty();
+        return true;
     }
 
-    private void finishOrAdvance(Table table, boolean advance) {
-        if (table == null || !table.live()) {
-            return;
-        }
+    /**
+     * After an action or a departure. {@code seating} is the table as it sat before the change,
+     * so a turn held by a player who has just left passes to the seat after theirs.
+     */
+    private void finishOrAdvance(Table table, List<UUID> seating, boolean advance) {
         Street street = streets.get(table.getId());
+        // No street means the cards are still being dealt, or the hand is already settled.
         if (street == null) {
             TableManager.get().refreshLabel(table);
             return;
         }
         List<UUID> live = liveSeats(table, street);
         if (live.size() <= 1) {
-            foldWin(table, live.isEmpty() ? null : live.get(0));
+            foldWin(table, live.isEmpty() ? null : live.getFirst());
             return;
         }
         if (streetComplete(table, street)) {
             table.setActor(null);
             tellSeated(table, Messages.get("poker.street_done"));
             TableManager.get().refreshLabel(table);
-            advanceBoard(table);
+            advanceBoard(table, street);
             return;
         }
         UUID actor = table.actor();
-        if (advance) {
-            table.setActor(nextLive(table, street, actor));
-        } else if (actor != null
-                && (street.folded.contains(actor) || street.capped.contains(actor)
-                        || !table.actives().contains(actor))) {
-            table.setActor(nextLive(table, street, actor));
+        // The turn moves on after an action, or when the player holding it has left. Nobody
+        // holds it while board cards are still landing.
+        if (advance || (actor != null && !table.actives().contains(actor))) {
+            table.setActor(SeatOrder.first(SeatOrder.after(table, seating, actor), id -> betting(street, id)));
         }
         TableManager.get().refreshLabel(table);
     }
 
     /** Everyone else folded, so the whole pot is the last player's. */
     private void foldWin(Table table, UUID winner) {
+        // Betting is over, so a late departure or board card cannot settle this hand again.
+        streets.remove(table.getId());
+        table.setActor(null);
         if (winner != null) {
             tellSeated(table, Messages.get("poker.win_fold", "name", RpNames.of(winner)));
         }
-        TableManager manager = TableManager.get();
         List<PayoutFlight> flights = new ArrayList<>();
         Player dest = winner != null ? Bukkit.getPlayer(winner) : null;
         if (dest != null) {
@@ -814,13 +622,7 @@ public final class PokerGame implements Game {
             WagerEngine.get().returnStakes(table, flights, "hand abandoned");
         }
         WagerEngine.get().announceWins(table, "poker");
-        UUID tableId = table.getId();
-        manager.flushPiles(table, flights, () -> {
-            Table still = TableManager.get().table(tableId);
-            if (still != null) {
-                finishHand(still);
-            }
-        });
+        finishAfterPayout(table, flights);
     }
 
     private static void tellSeated(Table table, String message) {
@@ -828,12 +630,4 @@ public final class PokerGame implements Game {
             player.sendMessage(message);
         }
     }
-
-    @Override
-    public int denarsToMatch(Table table, Player player) {
-        return 0;
-    }
-
-    @Override
-    public void onStreetCommit(Table table, Player player, int streetValue, boolean folded) {}
 }

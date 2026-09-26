@@ -129,14 +129,11 @@ public final class ConfigLoader implements LoaderInterface {
         ConfigurationSection items = config.getConfigurationSection("wager.items");
         if (items != null) {
             for (String key : items.getKeys(false)) {
-                if (key == null || key.isBlank()) {
+                if (key.isBlank()) {
                     continue;
                 }
                 ConfigurationSection section = items.getConfigurationSection(key);
-                WagerItemOverride override = readOverride(section, key.trim());
-                if (override != null) {
-                    Cache.wagerItems.add(override);
-                }
+                Cache.wagerItems.add(readOverride(section, key.trim()));
             }
         }
         return true;
@@ -149,9 +146,6 @@ public final class ConfigLoader implements LoaderInterface {
             if (configured != null && !configured.isBlank()) {
                 item = configured.trim();
             }
-        }
-        if (item == null || item.isBlank()) {
-            return null;
         }
         Integer value = null;
         String model = null;
