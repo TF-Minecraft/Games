@@ -318,6 +318,27 @@ public final class WagerEngine {
     }
 
     /**
+     * A leaver's bet on the current street, less whatever another seat has matched. Called chips
+     * are in the pot, so they stay there for whoever wins it; only the part nobody has called goes
+     * back. When the coins cannot make that part exactly, the most they can make goes back and the
+     * rest stays in the pot.
+     */
+    public TxResult refundUncalled(Table table, UUID owner, int street, List<PayoutFlight> flights,
+            String reason) {
+        int called = 0;
+        for (UUID other : potOwners(table)) {
+            if (!other.equals(owner)) {
+                called = Math.max(called, owned(table, other, street));
+            }
+        }
+        int uncalled = owned(table, owner, street) - called;
+        return begin(table, reason).animate(flights)
+                .moveUpTo(Accounts.bucket(table, owner).onStreet(street),
+                        Accounts.payee(table, Accounts.online(owner), owner), uncalled)
+                .commit();
+    }
+
+    /**
      * Put money back on a table as it was saved. Loading is not a transfer of anything, so no
      * transaction, but it still comes through here so the ledger only has one door.
      */

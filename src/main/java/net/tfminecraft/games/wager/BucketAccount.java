@@ -19,6 +19,7 @@ public final class BucketAccount implements MoneyAccount {
     private final UUID owner;
     private Location anchor;
     private boolean placed;
+    private Integer street;
 
     BucketAccount(Table table, UUID owner) {
         this.table = table;
@@ -39,6 +40,12 @@ public final class BucketAccount implements MoneyAccount {
     public BucketAccount placedAt(Location where) {
         this.anchor = where;
         this.placed = where != null;
+        return this;
+    }
+
+    /** Only what was staked on this betting street can be taken out of here. */
+    public BucketAccount onStreet(int street) {
+        this.street = street;
         return this;
     }
 
@@ -63,7 +70,7 @@ public final class BucketAccount implements MoneyAccount {
         }
         // The ledger refuses empty or worthless stakes and every take tidies what it empties, so
         // each live stake can be spent.
-        List<Stake> usable = new ArrayList<>(table.ledger().liveStakes(owner));
+        List<Stake> usable = spendable();
         // Biggest coins first so a take hands over as few pieces as it can, but the search
         // behind this will still find a combination that only the smaller ones can make.
         usable.sort((a, b) -> Integer.compare(b.unit(), a.unit()));
@@ -103,10 +110,21 @@ public final class BucketAccount implements MoneyAccount {
             return 0;
         }
         List<CoinPlanner.Slot> slots = new ArrayList<>();
-        for (Stake stake : table.ledger().liveStakes(owner)) {
+        for (Stake stake : spendable()) {
             slots.add(new CoinPlanner.Slot(stake.unit(), stake.count()));
         }
         return CoinPlanner.best(slots, denars);
+    }
+
+    /** The live stakes a set amount can come out of, which is all of them unless a street was named. */
+    private List<Stake> spendable() {
+        List<Stake> out = new ArrayList<>();
+        for (Stake stake : table.ledger().liveStakes(owner)) {
+            if (street == null || stake.streetId() == street) {
+                out.add(stake);
+            }
+        }
+        return out;
     }
 
     @Override

@@ -138,7 +138,7 @@ class DrawGameTest extends GameScenarioFixture {
         act("draw");
         assertEquals(DrawGame.BET, table.phase());
         assertEquals(2, table.street());
-        verify(wager).refundStreet(eq(table), eq(bob.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager).refundUncalled(eq(table), eq(bob.getUniqueId()), eq(1), anyList(), eq("player left"));
         verify(wager, never()).sweepPot(any(), any(), any(), anyList(), anyString());
     }
 
@@ -328,7 +328,27 @@ class DrawGameTest extends GameScenarioFixture {
     }
 
     @Test
-    void leavingDrawRoundRefundsOnlyCurrentStreetAndKeepsOtherPlayersDrawing() {
+    void leavingBeforeTheHandIsDealtHandsTheWholeBetBack() {
+        seat(alice, bob, carol);
+        game.onLeave(table, alice);
+        verify(wager).refundStreet(eq(table), eq(alice.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager, never()).refundUncalled(any(), any(), anyInt(), anyList(), anyString());
+    }
+
+    @Test
+    void aFoldedSeatThatLeavesGetsNothingBackFromThePot() {
+        start(alice, bob, carol);
+        Player folder = Bukkit.getPlayer(table.actor());
+        act("fold");
+        game.onLeave(table, folder);
+        drain();
+        verify(wager, never()).refundStreet(any(), any(), anyInt(), anyList(), anyString());
+        verify(wager, never()).refundUncalled(any(), any(), anyInt(), anyList(), anyString());
+        assertTrue(table.live(), "two seats are still playing for the pot");
+    }
+
+    @Test
+    void leavingDrawRoundRefundsOnlyTheUncalledBetAndKeepsOtherPlayersDrawing() {
         start(alice, bob, carol);
         enterDraw();
         game.onLeave(table, bob);
@@ -336,7 +356,7 @@ class DrawGameTest extends GameScenarioFixture {
         assertTrue(table.live());
         assertEquals(DrawGame.DRAW, table.phase());
         assertNotEquals(bob.getUniqueId(), table.actor());
-        verify(wager).refundStreet(eq(table), eq(bob.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager).refundUncalled(eq(table), eq(bob.getUniqueId()), eq(1), anyList(), eq("player left"));
         act("draw");
         act("draw");
         assertEquals(DrawGame.BET, table.phase());
@@ -578,7 +598,7 @@ class DrawGameTest extends GameScenarioFixture {
         act("call");
         assertEquals(DrawGame.DRAW, table.phase());
         assertEquals(bob.getUniqueId(), table.actor());
-        verify(wager).refundStreet(eq(table), eq(carol.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager).refundUncalled(eq(table), eq(carol.getUniqueId()), eq(1), anyList(), eq("player left"));
         verify(manager, never()).endSession(table);
     }
 

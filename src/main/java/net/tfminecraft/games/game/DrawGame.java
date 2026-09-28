@@ -269,6 +269,7 @@ public final class DrawGame implements Game, LiveCardReturns {
         List<UUID> before = new ArrayList<>(table.actives());
         boolean live = table.live();
         Street street = streets.get(table.getId());
+        boolean folded = street != null && street.folded.contains(leaver);
         if (street != null) {
             street.folded.remove(leaver);
             street.acted.remove(leaver);
@@ -286,8 +287,14 @@ public final class DrawGame implements Game, LiveCardReturns {
         TableManager.get().refreshLabel(table);
         int streetId = table.street();
         List<PayoutFlight> flights = new ArrayList<>();
-        // A leaver gets this street's bet back; earlier streets stay in the pot.
-        WagerEngine.get().refundStreet(table, leaver, streetId, flights, "player left");
+        // Earlier streets stay in the pot whatever happens. Before the hand, nothing on the felt has
+        // been bet against anyone, so it all goes back. Once it is dealt, only the part of this
+        // street's bet nobody has called goes back, and a folded hand has given up even that.
+        if (!live) {
+            WagerEngine.get().refundStreet(table, leaver, streetId, flights, "player left");
+        } else if (!folded) {
+            WagerEngine.get().refundUncalled(table, leaver, streetId, flights, "player left");
+        }
         UUID rest = null;
         if (table.actives().size() == 1) {
             rest = table.actives().iterator().next();

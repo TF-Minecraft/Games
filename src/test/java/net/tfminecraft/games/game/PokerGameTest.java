@@ -176,11 +176,31 @@ class PokerGameTest extends GameScenarioFixture {
     }
 
     @Test
-    void leavingRefundsCurrentStreetAndHandsAbandonedPotToRemainingSeat() {
+    void leavingBeforeTheHandIsDealtHandsTheWholeBetBack() {
+        seat(alice, bob, carol);
+        game.onLeave(table, alice);
+        verify(wager).refundStreet(eq(table), eq(alice.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager, never()).refundUncalled(any(), any(), anyInt(), anyList(), anyString());
+    }
+
+    @Test
+    void aFoldedSeatThatLeavesGetsNothingBackFromThePot() {
+        start(alice, bob, carol);
+        Player folder = Bukkit.getPlayer(table.actor());
+        act("fold");
+        game.onLeave(table, folder);
+        drain();
+        verify(wager, never()).refundStreet(any(), any(), anyInt(), anyList(), anyString());
+        verify(wager, never()).refundUncalled(any(), any(), anyInt(), anyList(), anyString());
+        assertTrue(table.live(), "two seats are still playing for the pot");
+    }
+
+    @Test
+    void leavingRefundsTheUncalledBetAndHandsAbandonedPotToRemainingSeat() {
         start(alice, bob);
         game.onLeave(table, alice);
         assertEquals(bob.getUniqueId(), table.dealerId());
-        verify(wager).refundStreet(eq(table), eq(alice.getUniqueId()), eq(1), anyList(), eq("player left"));
+        verify(wager).refundUncalled(eq(table), eq(alice.getUniqueId()), eq(1), anyList(), eq("player left"));
         verify(wager).sweepPot(eq(table), eq(bob), eq(bob.getUniqueId()), anyList(), eq("hand abandoned"));
         assertTrue(table.live());
         drain();

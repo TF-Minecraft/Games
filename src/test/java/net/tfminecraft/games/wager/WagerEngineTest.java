@@ -132,6 +132,43 @@ class WagerEngineTest {
     }
 
     @Test
+    void aLeaverGetsBackOnlyThePartOfTheirStreetBetThatNobodyHasCalled() {
+        UUID leaver = winner.getUniqueId();
+        UUID caller = opponent.getUniqueId();
+        UUID shortCaller = UUID.randomUUID();
+        restore(leaver, 4, 1);
+        restore(leaver, 10, 2);
+        restore(caller, 6, 2);
+        restore(shortCaller, 3, 2);
+        restore(table.getId(), 20, 2);
+        assertEquals(4, engine.refundUncalled(table, leaver, 2, null, "player left").moved(),
+                "six of the ten were called, so only four come back");
+        assertEquals(4, inventoryCoins(winner));
+        assertEquals(6, engine.owned(table, leaver, 2), "the called chips stay in the pot");
+        assertEquals(4, engine.owned(table, leaver, 1), "earlier streets are never refunded");
+        assertEquals(20, engine.tray(table), "the house tray is not a caller");
+        assertEquals(0, engine.refundUncalled(table, leaver, 2, null, "player left").moved(),
+                "what is left has all been called");
+        assertEquals(0, engine.refundUncalled(table, shortCaller, 2, null, "player left").moved(),
+                "a call below the bet has nothing uncalled");
+        assertEquals(3, engine.owned(table, shortCaller, 2));
+    }
+
+    @Test
+    void anUncalledPartTheStreetsCoinsCannotMakeReturnsTheMostTheyCanFromThatStreetOnly() {
+        UUID leaver = winner.getUniqueId();
+        restore(leaver, 4, 1);
+        engine.restore(table, leaver, coin(1), "gold", 5, 1, 2, null, null);
+        restore(leaver, 2, 2);
+        restore(opponent.getUniqueId(), 3, 2);
+        // Four are uncalled, but this street holds a five and two ones. Coins from street one could
+        // make four exactly, and must not be used to.
+        assertEquals(2, engine.refundUncalled(table, leaver, 2, null, "player left").moved());
+        assertEquals(5, engine.owned(table, leaver, 2));
+        assertEquals(4, engine.owned(table, leaver, 1));
+    }
+
+    @Test
     void cancellationReturnsEveryPlayersOwnStakeWithoutSpendingHouseTray() {
         bet(winner, 4);
         bet(opponent, 6);
