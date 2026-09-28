@@ -67,6 +67,8 @@ public final class Table {
     private ShufflePolicy shufflePolicy = ShufflePolicy.SHOE;
     private int smallBlind;
     private int bigBlind;
+    private UUID floatOwner;
+    private boolean deckConsumed = true;
 
     public Table(UUID id, String gameId, Location origin, float yaw, Deck deck) {
         this.id = id;
@@ -435,6 +437,33 @@ public final class Table {
 
     public void setBigBlind(int bigBlind) {
         this.bigBlind = Math.max(0, bigBlind);
+    }
+
+    /**
+     * The player whose own money sits in the tray of a table no house backs, once they are no
+     * longer at the shoe to take it back. Null while the tray is the current dealer's, or the
+     * house's.
+     */
+    public UUID floatOwner() {
+        return floatOwner;
+    }
+
+    public void setFloatOwner(UUID floatOwner) {
+        this.floatOwner = floatOwner;
+    }
+
+    /** The player who put this table down, or whoever is holding its shoe. */
+    public boolean hostedBy(UUID playerId) {
+        return playerId.equals(ownerPlayer) || playerId.equals(dealerId);
+    }
+
+    /** Whether putting this table down used up a deck, so picking it up should give one back. */
+    public boolean deckConsumed() {
+        return deckConsumed;
+    }
+
+    public void setDeckConsumed(boolean deckConsumed) {
+        this.deckConsumed = deckConsumed;
     }
 
     public void clearBetWindow() {

@@ -22,6 +22,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -177,7 +178,8 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
 
         manager.onQuit(new PlayerQuitEvent(leaver, "quit"));
         leaver.disconnect();
-        assertEquals(4, gold(leaver), "a box that quits takes its stake with it");
+        assertEquals(2, gold(leaver), "a box that quits mid-round loses its stake, as a bust would");
+        assertEquals(22, gold(dealer), "to the dealer who was covering it");
         assertEquals(stayer.getUniqueId(), table.actor());
         manager.applyPlayCall(stayer, "stand");
         advanceUntil(() -> BlackjackGame.SETTLE.equals(table.phase()));
@@ -200,7 +202,7 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         assertTrue(messages(dealer).contains("place.picked_up"));
         assertEquals(1, world.getEntitiesByClass(Item.class).stream()
                 .filter(drop -> drop.getItemStack().getType() == Material.PAPER).count(), "the deck comes back");
-        assertEquals(18, gold(dealer));
+        assertEquals(20, gold(dealer), "the forfeited stake paid the winner");
         table = null;
     }
 
@@ -232,9 +234,9 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         advanceUntil(() -> !table.live());
         manager.stopClock();
         assertTrue(table.getHands().isEmpty());
-        assertEquals(4, gold(walker), "walking away takes the stake back");
+        assertEquals(2, gold(walker), "walking away mid-round loses the stake");
         assertEquals(2, gold(stayer), "eleven loses to seventeen");
-        assertEquals(22, gold(dealer));
+        assertEquals(24, gold(dealer));
         assertEquals(52, table.getDeck().remaining() + table.getDeck().discarded());
     }
 
@@ -263,9 +265,9 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         advanceUntil(() -> !table.live());
         manager.stopClock();
         assertTrue(table.getHands().isEmpty());
-        assertEquals(4, gold(walker), "walking away takes the stake back");
+        assertEquals(2, gold(walker), "walking away mid-round loses the stake");
         assertEquals(2, gold(stayer), "eleven loses to seventeen");
-        assertEquals(22, gold(dealer));
+        assertEquals(24, gold(dealer));
         assertEquals(52, table.getDeck().remaining() + table.getDeck().discarded(), "the card in the air is not lost");
     }
 
@@ -296,10 +298,193 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         manager.applyPlayCall(stayer, "stand");
         advanceUntil(() -> !table.live());
         manager.stopClock();
-        assertEquals(4, gold(walker));
+        assertEquals(2, gold(walker), "a box that walks away during the deal has still bet");
         assertEquals(6, gold(stayer), "nineteen beats seventeen");
-        assertEquals(18, gold(dealer));
+        assertEquals(20, gold(dealer));
         assertEquals(52, table.getDeck().remaining() + table.getDeck().discarded());
+    }
+
+    @Test
+    void neitherABoxNorTheOwnerCanPickTheTableUpToUndoAHandInPlay() throws Exception {
+        restoreShoe(fullDeck(), List.of("oseni_10", "cerrith_6", "clubs_10", "oseni_8"));
+        openBets();
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
+        stake(player, 2, 0);
+        dealRound();
+        assertEquals(player.getUniqueId(), table.actor());
+        messages(player);
+        messages(dealer);
+        hitTable(player);
+        assertTrue(messages(player).contains("place.pickup_denied"), "a losing box cannot punch the table away");
+        hitTable(dealer);
+        assertTrue(messages(dealer).contains("place.pickup_live"), "the owner waits for the round to end");
+        assertSame(table, manager.table(table.getId()));
+        assertEquals(2, manager.ownedDenars(table, player.getUniqueId()), "the bet is still in play");
+        assertEquals(2, gold(player));
+    }
+
+    @Test
+    void aDealerWhoWalksAwayFromAnIdleTableTakesTheirFloatWithThem() throws Exception {
+        restoreShoe(fullDeck(), List.of());
+        clickShoe(dealer);
+        stockTray(3);
+        manager.startClock();
+        dealer.teleport(table.getOrigin().clone().add(40, 0, 0));
+        advanceUntil(() -> table.dealerId() == null);
+        manager.stopClock();
+        assertEquals(20, gold(dealer), "the float comes back rather than waiting for the next dealer");
+        assertEquals(0, manager.trayDenars(table));
+    }
+
+    @Test
+    void aDealerWhoStepsDownTakesTheirFloatWithThem() throws Exception {
+        restoreShoe(fullDeck(), List.of());
+        clickShoe(dealer);
+        stockTray(3);
+        clickShoe(dealer);
+        assertNull(table.dealerId());
+        assertTrue(messages(dealer).contains("dealer.unset"));
+        assertEquals(20, gold(dealer));
+        assertEquals(0, manager.trayDenars(table));
+    }
+
+    @Test
+    void aDealerWhoWalksOffMidRoundStillCoversItAndGetsTheTrayBackOnceItEnds() throws Exception {
+        PlayerMock other = playFloatRound();
+        manager.startClock();
+        dealer.teleport(table.getOrigin().clone().add(40, 0, 0));
+        advanceUntil(() -> table.dealerId() == null);
+        assertTrue(table.live(), "the round carries on without its dealer");
+        assertEquals(16, gold(dealer), "the float stays to cover the bets in play");
+        finishFloatRound(other);
+        manager.stopClock();
+        assertEquals(20, gold(dealer), "the float less the win, plus the loss, goes back to the dealer");
+        assertEquals(0, manager.trayDenars(table));
+        assertNull(table.floatOwner());
+        assertEquals(0, droppedGold(), "nothing is left on the floor for anyone to pick up");
+    }
+
+    @Test
+    void aDealerWhoLogsOffMidRoundHasTheirTrayKeptUntilTheyAreBack() throws Exception {
+        PlayerMock other = playFloatRound();
+        manager.onQuit(new PlayerQuitEvent(dealer, "quit"));
+        dealer.disconnect();
+        assertNull(table.dealerId());
+        finishFloatRound(other);
+        assertEquals(4, manager.trayDenars(table), "the float less the win, plus the loss, waits in the tray");
+        assertEquals(dealer.getUniqueId(), table.floatOwner());
+        assertEquals(0, droppedGold(), "a losing bet is never dropped where anyone could take it");
+        player.addAttachment(Games.plugin, "games.admin", true);
+        messages(player);
+        clickShoe(player);
+        assertNull(table.dealerId(), "nobody else can deal with an absent dealer's float");
+        assertTrue(messages(player).contains("dealer.float_held"));
+        assertEquals(16, gold(dealer));
+        dealer.reconnect();
+        manager.onJoin(new PlayerJoinEvent(dealer, "join"));
+        assertEquals(20, gold(dealer));
+        assertEquals(0, manager.trayDenars(table));
+        assertNull(table.floatOwner());
+        clickShoe(player);
+        assertEquals(player.getUniqueId(), table.dealerId(), "the table is free to deal again");
+    }
+
+    @Test
+    void aDealerWhoLogsBackInMidRoundGetsTheTrayOnlyOnceTheRoundIsOver() throws Exception {
+        PlayerMock other = playFloatRound();
+        manager.onQuit(new PlayerQuitEvent(dealer, "quit"));
+        dealer.disconnect();
+        dealer.reconnect();
+        manager.onJoin(new PlayerJoinEvent(dealer, "join"));
+        assertEquals(4, manager.trayDenars(table), "the float still covers the round in play");
+        assertEquals(16, gold(dealer));
+        finishFloatRound(other);
+        assertEquals(20, gold(dealer));
+        assertEquals(0, manager.trayDenars(table));
+        assertNull(table.floatOwner());
+    }
+
+    @Test
+    void aBoxThatWalksAwayBeforeTheDealTakesItsStakeBack() throws Exception {
+        restoreShoe(fullDeck(), List.of());
+        openBets();
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
+        stake(player, 2, 0);
+        manager.startClock();
+        player.teleport(table.getOrigin().clone().add(40, 0, 0));
+        advanceUntil(() -> manager.ownedDenars(table, player.getUniqueId()) == 0);
+        manager.stopClock();
+        assertFalse(table.live());
+        assertEquals(4, gold(player), "nothing has been dealt, so nothing has been bet yet");
+        assertEquals(20, gold(dealer));
+    }
+
+    @Test
+    void aDealerWithNoFloatWhoLogsOffMidRoundLeavesTheTableFreeToDeal() throws Exception {
+        restoreShoe(fullDeck(), List.of("oseni_10", "clubs_10", "oseni_9", "clubs_8"));
+        openBets();
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
+        stake(player, 2, 0);
+        dealRound();
+        manager.onQuit(new PlayerQuitEvent(dealer, "quit"));
+        dealer.disconnect();
+        manager.applyPlayCall(player, "stand");
+        advanceUntil(() -> !table.live());
+        assertEquals(4, gold(player), "nineteen beats eighteen, but the dealer left nothing to pay the win with");
+        assertNull(table.floatOwner(), "an empty tray holds nothing for anyone");
+        player.addAttachment(Games.plugin, "games.admin", true);
+        clickShoe(player);
+        assertEquals(player.getUniqueId(), table.dealerId());
+    }
+
+    /**
+     * The dealer stocks four coins, two boxes stake two each and the round is dealt: the first box
+     * holds nineteen, the second sixteen, and the dealer eighteen. Returns the second player.
+     */
+    private PlayerMock playFloatRound() throws Exception {
+        restoreShoe(fullDeck(), List.of("oseni_10", "cerrith_10", "clubs_10", "oseni_9", "cerrith_6", "clubs_8"));
+        PlayerMock other = opponent();
+        openBets();
+        stockTray(4);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
+        other.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
+        stake(player, 2, 0.3);
+        stake(other, 2, -0.3);
+        dealRound();
+        assertEquals(16, gold(dealer));
+        return other;
+    }
+
+    /** Both boxes stand. The first box wins out of the float, the second loses into the tray. */
+    private void finishFloatRound(PlayerMock other) {
+        PlayerMock first = Bukkit.getPlayer(table.boxes().getFirst()) == player ? player : other;
+        PlayerMock second = first == player ? other : player;
+        manager.applyPlayCall(first, "stand");
+        manager.applyPlayCall(second, "stand");
+        advanceUntil(() -> !table.live());
+        assertEquals(6, gold(first), "nineteen beats eighteen, paid out of the float");
+        assertEquals(2, gold(second), "sixteen loses to eighteen");
+    }
+
+    /** The dealer puts {@code coins} of their own into the tray, one click each. */
+    private void stockTray(int coins) {
+        int before = gold(dealer);
+        for (int i = 0; i < coins; i++) clickAt(dealer, 0, 2);
+        assertEquals(coins, manager.trayDenars(table));
+        assertEquals(before - coins, gold(dealer));
+    }
+
+    private void hitTable(PlayerMock by) {
+        EntityDamageByEntityEvent hit = mock(EntityDamageByEntityEvent.class);
+        when(hit.getEntity()).thenReturn(shoe);
+        when(hit.getDamager()).thenReturn(by);
+        manager.onHitEntity(hit);
+        verify(hit).setCancelled(true);
+    }
+
+    private int droppedGold() {
+        return world.getEntitiesByClass(Item.class).stream().map(Item::getItemStack)
+                .filter(item -> item.getType() == Material.GOLD_NUGGET).mapToInt(ItemStack::getAmount).sum();
     }
 
     private List<Card> fullDeck() {
@@ -384,9 +569,13 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
     }
 
     private void clickFeltAt(PlayerMock actor, double side) {
+        clickAt(actor, 0.75, side);
+    }
+
+    private void clickAt(PlayerMock actor, double x, double z) {
         // Supply the block-ray result at the input boundary; game state and transfers remain real.
         Player clicker = mock(Player.class, org.mockito.AdditionalAnswers.delegatesTo(actor));
-        Location hit = table.getOrigin().clone().add(0.75, 0, side);
+        Location hit = table.getOrigin().clone().add(x, 0, z);
         doReturn(new RayTraceResult(hit.toVector())).when(clicker).rayTraceBlocks(anyDouble());
         PlayerInteractEvent click = new PlayerInteractEvent(clicker, Action.RIGHT_CLICK_BLOCK,
                 actor.getInventory().getItemInMainHand(), world.getBlockAt(0, 64, 0),

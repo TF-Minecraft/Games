@@ -20,9 +20,13 @@ public final class FreePlayGame implements Game {
         return table != null && !table.live();
     }
 
+    /**
+     * The felt is paid out whole, other players' stakes included, so only the table's host may
+     * do it: whoever put the table down, or whoever holds its shoe.
+     */
     @Override
     public boolean allowManualPotFlush(Table table, Player player) {
-        return table != null && !table.live();
+        return table != null && !table.live() && table.hostedBy(player.getUniqueId());
     }
 
     @Override

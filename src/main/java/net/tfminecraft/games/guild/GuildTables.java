@@ -191,6 +191,12 @@ public final class GuildTables {
         return table.ownerPlayer() != null && table.ownerPlayer().equals(player.getUniqueId());
     }
 
+    /** True for the leader of the guild that owns this table, who is the one who may place and remove it. */
+    public static boolean leadsOwner(Table table, Player player) {
+        String guildId = table.ownerGuildId();
+        return guildId != null && !guildId.isBlank() && isLeader(guildId, player);
+    }
+
     private static boolean isMember(String guildId, Player player) {
         try {
             Guild guild = guild(guildId);

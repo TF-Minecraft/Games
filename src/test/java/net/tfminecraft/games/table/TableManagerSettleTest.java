@@ -24,6 +24,8 @@ import org.bukkit.util.RayTraceResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.MockedStatic;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import net.tfminecraft.games.cache.Cache;
@@ -31,6 +33,7 @@ import net.tfminecraft.games.display.WorldAnchors;
 import net.tfminecraft.games.layout.TableLayout;
 import net.tfminecraft.games.wager.Accounts;
 import net.tfminecraft.games.wager.WagerEngine;
+import net.tfminecraft.simplefactions.enums.GuildModifier;
 import net.tfminecraft.simplefactions.guild.Guild;
 import net.tfminecraft.simplefactions.managers.FactionManager;
 import net.tfminecraft.simplefactions.objects.Bank;
@@ -87,7 +90,7 @@ class TableManagerSettleTest extends TableManagerFixture {
         assertEquals(5, table.houseFloat(), "nothing reached the bank, so the float is still owed");
     }
 
-    @Test void pickingUpATableHandsAnAbsentPlayersStakeToThePlayerPickingItUp() {
+    @Test void pickingUpATableNeverHandsAnAbsentPlayersStakeToThePlayerPickingItUp() {
         // Like poker, this game keeps a leaver's chips in the pot but gives up their seat.
         doAnswer(call -> ((Table) call.getArgument(0)).actives().remove(((Player) call.getArgument(1)).getUniqueId()))
                 .when(game).onLeave(any(), any());
@@ -99,9 +102,44 @@ class TableManagerSettleTest extends TableManagerFixture {
         assertEquals(1, manager.ownedDenars(table, gone.getUniqueId()), "the leaver's chips stayed in the pot");
         pickUp(table, player);
         assertNull(manager.table(table.getId()));
-        assertEquals(1, Accounts.coins(table, player).available(), "rather than scattered on the floor");
-        assertEquals(0, dropped());
+        assertEquals(0, Accounts.coins(table, player).available(), "someone else's stake is not the picker's");
+        assertEquals(1, dropped(), "with nowhere to credit an offline owner it is dropped at the table");
         assertTrue(table.ledger().isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void aGuildTablesDealerWhoLeavesNeverTakesTheGuildsFloatWithThem(boolean midRound) {
+        Table table = place(false);
+        table.setOwnerGuildId("guild");
+        PlayerMock member = opponent();
+        table.setDealerId(member.getUniqueId());
+        WagerEngine.get().restore(table, table.getId(), new ItemStack(Material.GOLD_NUGGET), "gold", 1, 5,
+                table.street(), null, null);
+        PluginManager plugins = mock(PluginManager.class);
+        Plugin factions = mock(Plugin.class);
+        when(factions.isEnabled()).thenReturn(true);
+        when(plugins.getPlugin("SimpleFactions")).thenReturn(factions);
+        Guild guild = mock(Guild.class);
+        when(guild.getModifier(GuildModifier.AUTO_DEALER_TABLES)).thenReturn(2.0);
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
+                MockedStatic<FactionManager> registry = mockStatic(FactionManager.class)) {
+            bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
+            registry.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
+            if (midRound) {
+                manager.beginSession(table);
+                assertTrue(table.live());
+            }
+            manager.onQuit(new PlayerQuitEvent(member, "quit"));
+            assertNull(table.dealerId());
+            if (midRound) {
+                manager.endSession(table);
+            }
+        }
+        assertEquals(5, manager.trayDenars(table), "the tray is the guild's, whoever was dealing");
+        assertNull(table.floatOwner(), "and nobody is owed it");
+        assertEquals(0, Accounts.coins(table, member).available());
+        assertEquals(0, dropped());
     }
 
     @Test void aDealerClickingTheFeltRatherThanTheTrayPlacesAnOrdinaryBet() {

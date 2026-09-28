@@ -39,6 +39,12 @@ class TableManagerRetiredGameTest extends TableManagerFixture {
         stakeCoin(other, table);
         assertFalse(table.live(), "without a game nothing decides when a round begins");
         drain(player);
+        drain(other);
+        other.setSneaking(true);
+        shoe(table, other);
+        assertEquals("wager.no_flush", other.nextMessage(), "only the table's host pays the felt out");
+        assertEquals(2, table.ledger().total());
+        assertEquals(0, Accounts.coins(table, other).available());
         player.setSneaking(true);
         shoe(table, player);
         assertTrue(table.ledger().isEmpty());

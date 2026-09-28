@@ -128,12 +128,14 @@ class BlackjackGameTest {
             trayBalance -= amount;
             return result(true, amount);
         });
-        when(wagers.toTray(eq(table), any(UUID.class), anyInt(), anyList(), eq("loss"))).thenAnswer(call -> {
+        when(wagers.toTray(eq(table), any(UUID.class), anyInt(), anyList(), anyString())).thenAnswer(call -> {
             UUID owner = call.getArgument(1);
-            int amount = call.getArgument(2);
-            bets.computeIfPresent(owner, (id, held) -> held > amount ? held - amount : null);
-            trayBalance += amount;
-            return result(true, amount);
+            int requested = call.getArgument(2);
+            int held = bets.getOrDefault(owner, 0);
+            int moved = requested < 1 ? held : Math.min(held, requested);
+            bets.computeIfPresent(owner, (id, left) -> left > moved ? left - moved : null);
+            trayBalance += moved;
+            return result(true, moved);
         });
         doAnswer(call -> {
             trayBalance = 0;
@@ -530,7 +532,73 @@ class BlackjackGameTest {
         game.onLeave(table, left);
         assertEquals(player.getUniqueId(), table.actor());
         assertEquals(List.of(player.getUniqueId()), table.boxes());
-        verify(manager).refundOwnedPiles(table, left);
+        verify(manager, never()).refundOwnedPiles(any(), any());
+        verify(wagers).refund(eq(table), eq(left.getUniqueId()), eq(dealer), eq(0), anyList(),
+                eq("box forfeited to dealer"));
+        assertFalse(bets.containsKey(left.getUniqueId()), "the private dealer takes the stake as a loss");
+        assertFalse(table.actives().contains(left.getUniqueId()));
+        assertMessage(left, "bet.forfeit");
+        game.onBetStand(table, player);
+        finishAnimations();
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        verify(wagers, times(1)).refund(eq(table), eq(left.getUniqueId()), any(), anyInt(), anyList(), anyString());
+        assertNull(left.nextMessage(), "a forfeited box is not settled again as a second loss");
+    }
+
+    @Test
+    void aBoxThatLeavesAHouseTableMidRoundLosesItsStakeToTheTray() {
+        houseBacked();
+        PlayerMock other = server.addPlayer();
+        seat(other, 10, 1);
+        start(10, 9, 10, 9, 7, 8);
+        UUID leaver = table.actor();
+        int stake = bets.get(leaver);
+        game.onLeave(table, Bukkit.getPlayer(leaver));
+        verify(wagers).toTray(eq(table), eq(leaver), eq(0), anyList(), eq("box forfeited"));
+        verify(manager, never()).refundOwnedPiles(any(), any());
+        assertEquals(stake, trayBalance, "on a mint or guild table the house keeps it");
+        assertFalse(bets.containsKey(leaver));
+    }
+
+    @Test
+    void aBoxLeavingARoundStartedWhileBetsWereOpenDoesNotStartTheBetClock() {
+        houseBacked();
+        table.setDealerId(null);
+        table.setAutoDealer(true);
+        PlayerMock other = server.addPlayer();
+        seat(other, 10, 1);
+        game.onTableReady(table);
+        assertTrue(table.betOpen());
+        // Staff can start a round by command while the betting window is still open.
+        start(10, 9, 10, 9, 7, 8);
+        Player leaver = Bukkit.getPlayer(table.actor());
+        game.onLeave(table, leaver);
+        // TableManager reports the changed seat to the game straight after every departure.
+        game.onChipIn(table, leaver);
+        assertEquals(0, table.autoCountdown(), "no bet window counts down over a round in play");
+        server.getScheduler().performTicks(40);
+        verify(manager, never()).beginSession(table);
+    }
+
+    @Test
+    void aPrivateDealersLossesGoToTheirTrayWhileTheyAreAwayFromTheShoe() {
+        PlayerMock other = server.addPlayer();
+        seat(other, 10, 1);
+        start(10, 9, 10, 9, 7, 8);
+        UUID leaver = table.actor();
+        UUID stayer = leaver.equals(player.getUniqueId()) ? other.getUniqueId() : player.getUniqueId();
+        table.setDealerId(null);
+        game.onDealerGone(table);
+        int stake = bets.get(leaver);
+        game.onLeave(table, Bukkit.getPlayer(leaver));
+        verify(wagers).toTray(eq(table), eq(leaver), eq(0), anyList(), eq("box forfeited"));
+        assertEquals(stake, trayBalance);
+        game.onBetStand(table, Bukkit.getPlayer(stayer));
+        finishAnimations();
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        verify(wagers).toTray(eq(table), eq(stayer), eq(10), anyList(), eq("loss"));
+        verify(wagers, never()).refund(any(), any(), isNull(), anyInt(), anyList(), anyString());
+        assertEquals(stake + 10, trayBalance, "nothing is dropped where anyone could pick it up");
     }
 
     @Test

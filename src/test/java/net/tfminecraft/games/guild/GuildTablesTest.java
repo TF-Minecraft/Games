@@ -234,6 +234,17 @@ class GuildTablesTest {
     }
 
     @Test
+    void onlyTheLeaderOfTheOwningGuildLeadsItsTable() {
+        assertTrue(GuildTables.leadsOwner(table("guild"), player), "the leader is matched ignoring case");
+        when(guild.getLeader()).thenReturn("Bob");
+        assertFalse(GuildTables.leadsOwner(table("guild"), player), "a member who does not lead it");
+        when(guild.getLeader()).thenReturn("Alice");
+        assertFalse(GuildTables.leadsOwner(table(null), player), "a personal table has no guild to lead");
+        assertFalse(GuildTables.leadsOwner(table(" "), player));
+        assertFalse(GuildTables.leadsOwner(table("deleted"), player));
+    }
+
+    @Test
     void blankSavedGuildFallsBackToPersonalOwnershipAndDeletedGuildHasNoMembers() {
         Table blank = table(" ");
         blank.setOwnerPlayer(player.getUniqueId());

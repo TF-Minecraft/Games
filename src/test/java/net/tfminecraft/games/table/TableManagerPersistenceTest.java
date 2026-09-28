@@ -16,6 +16,7 @@ import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
@@ -26,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -534,6 +536,65 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         manager.loadAll();
         assertEquals(0, inventoryGold());
         assertEquals(3, droppedGold());
+    }
+
+    @Test
+    void anAbsentDealersTraySurvivesARestartAndGoesBackWhenTheyLogIn() throws Exception {
+        PlayerMock gone = opponent();
+        gone.disconnect();
+        UUID id = UUID.randomUUID();
+        JsonObject saved = document(id);
+        saved.getAsJsonArray("ledger").add(stake(id, 4));
+        saved.addProperty("floatOwner", gone.getUniqueId().toString());
+        write(id + ".json", saved);
+        manager.loadAll();
+        Table loaded = manager.table(id);
+        assertNotNull(loaded);
+        assertEquals(4, manager.trayDenars(loaded), "the tray is kept for the dealer it belongs to");
+        assertEquals(0, droppedGold(), "rather than dropped at an empty table");
+        assertEquals(gone.getUniqueId(), loaded.floatOwner());
+        assertEquals(gone.getUniqueId().toString(), read(id).get("floatOwner").getAsString());
+        gone.reconnect();
+        manager.onJoin(new PlayerJoinEvent(gone, "join"));
+        assertEquals(4, gone.getInventory().all(Material.GOLD_NUGGET).values().stream()
+                .mapToInt(ItemStack::getAmount).sum());
+        assertEquals(0, manager.trayDenars(loaded));
+        assertNull(loaded.floatOwner());
+        assertFalse(read(id).has("floatOwner"));
+        manager.onJoin(new PlayerJoinEvent(player, "join"));
+        assertEquals(0, inventoryGold(), "logging in pays nobody else");
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(booleans = {true, false})
+    void aSavedTableGivesADeckBackOnlyIfPlacingItUsedOne(Boolean consumed) throws Exception {
+        UUID id = UUID.randomUUID();
+        JsonObject saved = document(id);
+        saved.addProperty("ownerPlayer", player.getUniqueId().toString());
+        if (consumed != null) saved.addProperty("deckConsumed", consumed);
+        write(id + ".json", saved);
+        manager.loadAll();
+        Table loaded = manager.table(id);
+        assertEquals(!Boolean.FALSE.equals(consumed), loaded.deckConsumed(),
+                "older files, written before this was recorded, always gave a deck back");
+        Entity anchor = mock(Entity.class);
+        anchors.when(() -> WorldAnchors.tableId(anchor)).thenReturn(id.toString());
+        EntityDamageByEntityEvent pickup = mock(EntityDamageByEntityEvent.class);
+        when(pickup.getEntity()).thenReturn(anchor);
+        when(pickup.getDamager()).thenReturn(player);
+        manager.onHitEntity(pickup);
+        assertNull(manager.table(id));
+        assertEquals(Boolean.FALSE.equals(consumed) ? 0 : 1, world.getEntitiesByClass(Item.class).stream()
+                .filter(drop -> drop.getItemStack().getType() == Material.PAPER).count());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void placingATableRecordsWhetherItUsedADeck(boolean requireDeck) throws Exception {
+        player.getInventory().setItemInMainHand(new ItemStack(Material.PAPER));
+        Table table = place(requireDeck);
+        assertEquals(requireDeck, read(table.getId()).get("deckConsumed").getAsBoolean());
     }
 
     private JsonObject document(UUID id) {

@@ -116,6 +116,21 @@ class TableManagerActionTest extends TableManagerFixture {
         assertEquals(0, Accounts.coins(table, other).available());
     }
 
+    @Test void aVisitorCannotFlushSomeoneElsesFreeplayFeltToThemselves() {
+        games.when(() -> GamesRegistry.of("freeplay")).thenReturn(new FreePlayGame());
+        Table table = place(false);
+        PlayerMock visitor = opponent();
+        stakeCoin(player, table);
+        stakeCoin(visitor, table);
+        visitor.setSneaking(true);
+        clearMessages(visitor);
+        shoe(table, visitor);
+        assertEquals("wager.no_flush", visitor.nextMessage());
+        assertEquals(1, table.ledger().total(player.getUniqueId()), "the owner's stake stays on the felt");
+        assertEquals(1, table.ledger().total(visitor.getUniqueId()));
+        assertEquals(0, Accounts.coins(table, visitor).available());
+    }
+
     @Test void liveShoeReturnsSelectedCardAndReportsExactCountToGame() {
         Table table = place(false);
         Map<UUID, DisplayPose> poses = new HashMap<>();

@@ -237,7 +237,9 @@ class TableManagerLifecycleTest extends TableManagerFixture {
 
     @Test void pickingUpARetiredGameTableWithoutADeckItemStillRemovesItAndRefunds() throws Exception {
         UUID id = UUID.randomUUID();
-        write(id, document(id, "retired"));
+        JsonObject owned = document(id, "retired");
+        owned.addProperty("ownerPlayer", player.getUniqueId().toString());
+        write(id, owned);
         manager.loadAll();
         Table table = manager.table(id);
         WagerEngine.get().restore(table, player.getUniqueId(), new ItemStack(Material.GOLD_NUGGET),

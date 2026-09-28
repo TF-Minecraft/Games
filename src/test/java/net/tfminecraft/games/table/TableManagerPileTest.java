@@ -346,6 +346,7 @@ class TableManagerPileTest extends TableManagerFixture {
         saved.addProperty("y", 65);
         saved.addProperty("setName", Cache.pokerCardSet);
         saved.addProperty("shufflePolicy", policy.name());
+        saved.addProperty("ownerPlayer", player.getUniqueId().toString());
         saved.add("remaining", json.toJsonTree(remaining));
         saved.add("discarded", json.toJsonTree(discarded));
         var folder = data.resolve("Data/tables");

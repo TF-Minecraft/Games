@@ -30,14 +30,30 @@ class FreePlayGameTest {
     void sandboxActionsAreAvailableOnlyWhileTableIsIdle() {
         assertFalse(game.allowFreeDraw(null, player));
         assertFalse(game.allowReturnSelected(null, player));
-        assertFalse(game.allowManualPotFlush(null, player));
         assertTrue(game.allowFreeDraw(table, player));
         assertTrue(game.allowReturnSelected(table, player));
-        assertTrue(game.allowManualPotFlush(table, player));
         table.startSession();
         assertFalse(game.allowFreeDraw(table, player));
         assertFalse(game.allowReturnSelected(table, player));
-        assertFalse(game.allowManualPotFlush(table, player));
+    }
+
+    @Test
+    void onlyTheTablesHostMayPayTheWholeFeltOutAndOnlyBetweenGames() {
+        UUID owner = UUID.randomUUID();
+        UUID dealer = UUID.randomUUID();
+        Player host = mock(Player.class);
+        Player shoe = mock(Player.class);
+        when(host.getUniqueId()).thenReturn(owner);
+        when(shoe.getUniqueId()).thenReturn(dealer);
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        table.setOwnerPlayer(owner);
+        table.setDealerId(dealer);
+        assertFalse(game.allowManualPotFlush(null, host));
+        assertTrue(game.allowManualPotFlush(table, host), "the owner may pay out their own table");
+        assertTrue(game.allowManualPotFlush(table, shoe), "so may whoever holds the shoe");
+        assertFalse(game.allowManualPotFlush(table, player), "a visitor may not take everyone's stakes");
+        table.startSession();
+        assertFalse(game.allowManualPotFlush(table, host), "not even the owner, once a game is under way");
     }
 
     @Test

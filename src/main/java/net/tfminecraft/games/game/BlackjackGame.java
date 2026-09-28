@@ -103,6 +103,12 @@ public final class BlackjackGame implements Game {
     /** TableManager only offers the shoe for claiming while the table is idle. */
     @Override
     public boolean tryClaimDealer(Table table, Player player) {
+        if (table.floatOwner() != null) {
+            // Only a dealer who is offline still has a float waiting here: anyone online gets theirs
+            // back when their round ends or they log in. A new dealer would be paying with it.
+            player.sendMessage(Messages.get("dealer.float_held"));
+            return true;
+        }
         if (auto(table)) {
             if (!inStandRange(table, player)) {
                 return true;
@@ -135,6 +141,7 @@ public final class BlackjackGame implements Game {
         }
         if (have.equals(player.getUniqueId())) {
             table.setDealerId(null);
+            TableManager.get().returnDealerFloat(table, player);
             TableManager.get().persistHouseChange(table);
             player.sendMessage(Messages.get("dealer.unset"));
             return true;
@@ -361,22 +368,63 @@ public final class BlackjackGame implements Game {
 
     @Override
     public void onLeave(Table table, Player player) {
+        UUID id = player.getUniqueId();
+        if (table.live()) {
+            forfeitBox(table, player);
+            // A dealer can leave as a seat too, when they had their own chips on the felt.
+            continueWithout(table, id, id.equals(table.dealerId()));
+            return;
+        }
         TableManager manager = TableManager.get();
         int felt = 0;
-        boolean peel = auto(table) && !table.live() && table.betOpen();
+        boolean peel = auto(table) && table.betOpen();
         if (peel) {
-            felt = manager.ownedDenars(table, player.getUniqueId());
+            felt = manager.ownedDenars(table, id);
         }
         Game.super.onLeave(table, player);
         if (peel && felt > 0) {
             peelAutoTray(table, felt);
         }
         onChipIn(table, player);
-        if (table.live()) {
-            // A dealer can leave as a seat too, when they had their own chips on the felt.
-            UUID id = player.getUniqueId();
-            continueWithout(table, id, id.equals(table.dealerId()));
+    }
+
+    /**
+     * A box that walks away or logs off once the round has started loses its bet, doubles and
+     * splits included, exactly as a bust would. Handing it back would let a player see a losing
+     * hand and leave with the stake.
+     */
+    private void forfeitBox(Table table, Player player) {
+        UUID owner = player.getUniqueId();
+        List<PayoutFlight> flights = new ArrayList<>();
+        collectLoss(table, owner, 0, dealerAtShoe(table), flights, "box forfeited");
+        WagerEngine.get().forget(table, owner);
+        // Its hands are lost with the bet, so the settle does not count them again. A live table
+        // always holds its round, which onSessionStart put there before any card was dealt.
+        rounds.get(table.getId()).removeIf(hand -> owner.equals(hand.owner));
+        table.actives().remove(owner);
+        TableManager.get().flushPiles(table, flights, null);
+        player.sendMessage(Messages.get("bet.forfeit"));
+    }
+
+    /**
+     * A losing bet leaves its box: into the house tray on a backed table, and into a private
+     * dealer's pockets on their own. With that dealer gone from the shoe it goes into the tray they
+     * stocked, which is handed back to them after the round, rather than onto the floor for anyone
+     * to pick up. Pass {@code denars} below 1 for the whole box. Returns what left the table.
+     */
+    private static int collectLoss(Table table, UUID owner, int denars, Player dealer,
+            List<PayoutFlight> flights, String reason) {
+        if (houseFunded(table) || dealer == null) {
+            WagerEngine.get().toTray(table, owner, denars, flights, reason);
+            return 0;
         }
+        return WagerEngine.get().refund(table, owner, dealer, denars, flights, reason + " to dealer").moved();
+    }
+
+    /** The human dealer, while they hold the shoe and are online. */
+    private static Player dealerAtShoe(Table table) {
+        UUID dealerId = table.dealerId();
+        return dealerId != null ? Bukkit.getPlayer(dealerId) : null;
     }
 
     @Override
@@ -1136,8 +1184,7 @@ public final class BlackjackGame implements Game {
         TableManager manager = TableManager.get();
         int dealerTotal = bestTotal(table.tablePile(DEALER));
         boolean dealerBust = dealerTotal > 21;
-        UUID dealerId = table.dealerId();
-        Player dealer = dealerId != null ? Bukkit.getPlayer(dealerId) : null;
+        Player dealer = dealerAtShoe(table);
         Map<UUID, Integer> collect = new HashMap<>();
         Map<UUID, Integer> pay = new HashMap<>();
         Map<UUID, ItemStack> templates = new HashMap<>();
@@ -1170,16 +1217,8 @@ public final class BlackjackGame implements Game {
         // Nothing comes into the table during a settle. A dealer or a bank covering a win pays the
         // winner directly, so that money is never table money for even an instant.
         int wentOut = 0;
-        // Losing bets leave the box: a private dealer takes them, the house tray keeps them.
         for (Map.Entry<UUID, Integer> entry : collect.entrySet()) {
-            UUID owner = entry.getKey();
-            if (dealerBacked) {
-                wentOut += WagerEngine.get()
-                        .refund(table, owner, dealer, entry.getValue(), flights, "loss to dealer")
-                        .moved();
-            } else {
-                WagerEngine.get().toTray(table, owner, entry.getValue(), flights, "loss");
-            }
+            wentOut += collectLoss(table, entry.getKey(), entry.getValue(), dealer, flights, "loss");
         }
         // A winning box still holds the coins it staked, so they show what to pay it in.
         for (Map.Entry<UUID, Integer> entry : pay.entrySet()) {

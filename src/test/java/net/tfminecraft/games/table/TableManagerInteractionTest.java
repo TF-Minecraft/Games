@@ -21,9 +21,17 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BoundingBox;
 import org.junit.jupiter.api.Test;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.PluginManager;
+import org.mockito.MockedStatic;
+import org.mockbukkit.mockbukkit.entity.PlayerMock;
+import net.tfminecraft.simplefactions.guild.Guild;
+import net.tfminecraft.simplefactions.managers.FactionManager;
+import net.tfminecraft.games.Games;
 import net.tfminecraft.games.cache.Cache;
 import net.tfminecraft.games.display.WorldAnchors;
 import net.tfminecraft.games.gui.GameSelectGui;
+import net.tfminecraft.games.wager.Accounts;
 
 class TableManagerInteractionTest extends TableManagerFixture {
     @Test void armedPlacementUsesTheSurfaceTopAndRetainsArmAfterRefusedSideClick() {
@@ -69,7 +77,8 @@ class TableManagerInteractionTest extends TableManagerFixture {
     }
 
     @Test void pickupRemovesSavedTableAndDisplaysAndReturnsThePhysicalDeck() throws Exception {
-        Table table = place(false);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.PAPER));
+        Table table = place(true);
         manager.dealToPlayer(table, player, 1); tick(3);
         List<UUID> handTokens = table.handOf(player.getUniqueId()).stream().map(HandCard::tokenId).toList();
         var file = data.resolve("Data/tables/" + table.getId() + ".json");
@@ -89,6 +98,72 @@ class TableManagerInteractionTest extends TableManagerFixture {
         List<Item> drops = world.getEntities().stream().filter(Item.class::isInstance).map(Item.class::cast).toList();
         assertEquals(1, drops.size());
         assertEquals(new ItemStack(Material.PAPER), drops.getFirst().getItemStack());
+    }
+
+    @Test void aTableStaffPlacedWithoutADeckGivesNoDeckBack() {
+        Table table = place(false);
+        hitTable(table, player);
+        assertNull(manager.table(table.getId()));
+        assertTrue(world.getEntities().stream().noneMatch(Item.class::isInstance),
+                "no deck was used, so none comes back");
+    }
+
+    @Test void onlyTheOwnerOrStaffMayPickUpATableAndNeverMidRound() {
+        Table table = place(false);
+        PlayerMock visitor = opponent();
+        stakeCoin(visitor, table);
+        hitTable(table, visitor);
+        assertSame(table, manager.table(table.getId()), "a visitor cannot take the table away");
+        assertEquals("place.pickup_denied", visitor.nextMessage());
+        assertEquals(1, manager.ownedDenars(table, visitor.getUniqueId()), "nor clear the felt");
+        manager.beginSession(table);
+        while (player.nextMessage() != null) { }
+        hitTable(table, player);
+        assertSame(table, manager.table(table.getId()), "the owner waits for the round to end");
+        assertEquals("place.pickup_live", player.nextMessage());
+        assertEquals(1, manager.ownedDenars(table, visitor.getUniqueId()), "and the hand is not undone");
+        manager.endSession(table);
+        PlayerMock staff = opponent();
+        staff.addAttachment(Games.plugin, "games.admin", true);
+        hitTable(table, staff);
+        assertNull(manager.table(table.getId()));
+        assertEquals("place.picked_up", staff.nextMessage());
+        assertEquals(1, Accounts.coins(table, visitor).available(), "the visitor's stake goes back to them");
+        assertEquals(0, Accounts.coins(table, staff).available());
+    }
+
+    @Test void theLeaderOfTheGuildThatOwnsATableMayPickItUpButItsMembersMayNot() {
+        Table table = place(false);
+        table.setOwnerGuildId("guild");
+        PlayerMock leader = opponent();
+        PlayerMock member = opponent();
+        PluginManager plugins = mock(PluginManager.class);
+        Plugin factions = mock(Plugin.class);
+        when(factions.isEnabled()).thenReturn(true);
+        when(plugins.getPlugin("SimpleFactions")).thenReturn(factions);
+        Guild guild = mock(Guild.class);
+        when(guild.getLeader()).thenReturn(leader.getName());
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
+                MockedStatic<FactionManager> registry = mockStatic(FactionManager.class)) {
+            bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
+            registry.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
+            hitTable(table, member);
+            assertSame(table, manager.table(table.getId()));
+            assertEquals("place.pickup_denied", member.nextMessage());
+            hitTable(table, leader);
+        }
+        assertNull(manager.table(table.getId()));
+        assertEquals("place.picked_up", leader.nextMessage());
+    }
+
+    private void hitTable(Table table, PlayerMock by) {
+        Entity anchor = mock(Entity.class);
+        anchors.when(() -> WorldAnchors.tableId(anchor)).thenReturn(table.getId().toString());
+        EntityDamageByEntityEvent event = mock(EntityDamageByEntityEvent.class);
+        when(event.getEntity()).thenReturn(anchor);
+        when(event.getDamager()).thenReturn(by);
+        manager.onHitEntity(event);
+        verify(event).setCancelled(true);
     }
 
     @Test void unrelatedEntityDamageDoesNotPickUpATable() {

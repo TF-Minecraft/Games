@@ -22,7 +22,8 @@ public interface Game {
 
     /**
      * Open table: refund every pile this player owns, then drop them from actives.
-     * Poker overrides to refund only the current street and pay the last remaining player.
+     * Poker and draw override to refund only the part of the current street nobody has called
+     * and pay the last remaining player; blackjack forfeits a box that leaves a round in play.
      */
     default void onLeave(Table table, Player player) {
         TableManager manager = TableManager.get();

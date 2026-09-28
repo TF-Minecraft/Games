@@ -45,6 +45,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
@@ -334,8 +335,14 @@ public final class TableManager implements Listener, WagerHost {
             discardPlayerCards(table, playerId);
         }
         despawnTablePiles(table);
-        settleAutoTray(table, dropAt);
-        clearFeltNow(table, null);
+        if (table.floatOwner() == null) {
+            settleAutoTray(table, dropAt);
+        } else {
+            // A dealer who left mid-round is owed this tray, so it waits for them rather than
+            // being dropped at an empty table on shutdown.
+            settleAbsentFloat(table);
+        }
+        clearFeltNow(table);
         table.actives().clear();
         table.setDealerId(null);
         table.setStreet(1);
@@ -463,6 +470,7 @@ public final class TableManager implements Listener, WagerHost {
             player.sendMessage(Messages.get("place.spawn_failed"));
             return true;
         }
+        table.setDeckConsumed(arm.requireDeck);
         tables.put(table.getId(), table);
         save(table);
         if (arm.requireDeck) {
@@ -552,6 +560,18 @@ public final class TableManager implements Listener, WagerHost {
         layoutHoldUntil.remove(event.getPlayer().getUniqueId());
         selectAnimGen.remove(event.getPlayer().getUniqueId());
         clearRevealed(event.getPlayer().getUniqueId(), null);
+    }
+
+    /** A dealer who logged off mid-round gets back the tray the round left them. */
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        for (Table table : tables.values()) {
+            // A live round hands the tray back itself when it ends.
+            if (!table.live() && player.getUniqueId().equals(table.floatOwner())) {
+                payTray(table, player);
+            }
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -654,7 +674,21 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         event.setCancelled(true);
+        if (!mayPickUp(player, table)) {
+            player.sendMessage(Messages.get("place.pickup_denied"));
+            return;
+        }
+        if (table.live()) {
+            // Picking up clears the felt, which mid-round would hand every bet back and undo the hand.
+            player.sendMessage(Messages.get("place.pickup_live"));
+            return;
+        }
         pickup(player, table);
+    }
+
+    /** Whoever put the table down, the leader of the guild that owns it, or staff. */
+    private boolean mayPickUp(Player player, Table table) {
+        return canEditHouse(player, table) || GuildTables.leadsOwner(table, player);
     }
 
     @EventHandler
@@ -683,7 +717,7 @@ public final class TableManager implements Listener, WagerHost {
         cancelLootArmsForTable(table.getId());
         Location dropAt = table.getOrigin().clone();
         settleAutoTray(table, dropAt);
-        clearFeltNow(table, player);
+        clearFeltNow(table);
         returnAllHands(table, false, false);
         table.actives().clear();
         table.clearSession();
@@ -696,7 +730,9 @@ public final class TableManager implements Listener, WagerHost {
         despawnWorld(table);
         tables.remove(table.getId());
         deleteFile(table.getId());
-        ItemStack deckItem = TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getDeckItem());
+        // A table staff put down without a deck gives none back, or placing and lifting it would mint decks.
+        ItemStack deckItem = table.deckConsumed()
+                ? TLibs.getItemAPI().getCreator().getItemFromPath(CardLoader.getDeckItem()) : null;
         if (deckItem != null) {
             dropAt.getWorld().dropItemNaturally(dropAt, deckItem);
         }
@@ -795,6 +831,13 @@ public final class TableManager implements Listener, WagerHost {
         for (Table table : tables.values()) {
             if (id.equals(table.dealerId())) {
                 table.setDealerId(null);
+                if (table.live() && !GuildTables.houseBacked(table)) {
+                    // Their float still covers the bets in play, so it goes back once the round is
+                    // over, together with anything the round wins for them.
+                    table.setFloatOwner(id);
+                } else {
+                    returnDealerFloat(table, player);
+                }
                 Game game = gameOf(table);
                 if (game != null) {
                     game.onDealerGone(table);
@@ -1704,6 +1747,7 @@ public final class TableManager implements Listener, WagerHost {
         checkFeltEmpty(table, "session end");
         despawnTablePiles(table);
         rebuildCardStacks(table);
+        settleAbsentFloat(table);
         save(table);
         recycleIfNeeded(table, null);
         Game game = gameOf(table);
@@ -1821,13 +1865,9 @@ public final class TableManager implements Listener, WagerHost {
 
     private static void applyHouseData(Table table, TableData data) {
         TableLayout layout = Cache.layoutOf(table.getGameId());
-        if (data.ownerPlayer != null) {
-            try {
-                table.setOwnerPlayer(UUID.fromString(data.ownerPlayer));
-            } catch (IllegalArgumentException ignored) {
-                // keep null
-            }
-        }
+        table.setOwnerPlayer(playerId(data.ownerPlayer));
+        table.setFloatOwner(playerId(data.floatOwner));
+        table.setDeckConsumed(!Boolean.FALSE.equals(data.deckConsumed));
         table.setOwnerGuildId(data.ownerGuildId);
         table.setHouseFloat(data.houseFloat != null ? data.houseFloat : 0);
         if (data.autoDealer == null) {
@@ -1855,6 +1895,18 @@ public final class TableManager implements Listener, WagerHost {
         } else {
             table.setSmallBlind(data.smallBlind != null ? data.smallBlind : 0);
             table.setBigBlind(data.bigBlind != null ? data.bigBlind : 0);
+        }
+    }
+
+    /** A saved player id, or null when it is missing or unreadable. */
+    private static UUID playerId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException ignored) {
+            return null;
         }
     }
 
@@ -1981,9 +2033,11 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
+    /** A table without a game is plain free play, so it keeps free play's rule. */
     private static boolean allowManualPotFlush(Table table, Player player) {
         Game game = gameOf(table);
-        return game != null ? game.allowManualPotFlush(table, player) : !table.live();
+        return game != null ? game.allowManualPotFlush(table, player)
+                : !table.live() && table.hostedBy(player.getUniqueId());
     }
 
     /** Only asked of idle tables, where a table without a game is plain free play. */
@@ -2938,18 +2992,15 @@ public final class TableManager implements Listener, WagerHost {
      * Hand every bucket back: players get their own stakes, the tray goes to the guild bank
      * when the house funded it and to the dealer when a human did.
      */
-    private void clearFeltNow(Table table, Player fallback) {
+    private void clearFeltNow(Table table) {
         table.bumpPayoutGen();
         table.clearPayoutOnDone();
         List<UUID> owners = wager().potOwners(table);
         MoneyTx tx = wager().begin(table, "felt cleared");
         for (UUID owner : owners) {
-            Player dest = Bukkit.getPlayer(owner);
-            if (dest == null) {
-                // Only a pickup passes a fallback, and the player picking the table up is online.
-                dest = fallback;
-            }
-            tx.moveAll(Accounts.bucket(table, owner), Accounts.payee(table, dest, owner));
+            // Nobody else is ever paid a player's stake. With nowhere to credit an offline owner,
+            // theirs is dropped at the table like any other payout to someone who is gone.
+            tx.moveAll(Accounts.bucket(table, owner), Accounts.payee(table, Bukkit.getPlayer(owner), owner));
         }
         tx.commit();
         for (UUID owner : owners) {
@@ -2993,6 +3044,43 @@ public final class TableManager implements Listener, WagerHost {
                     .commit();
         }
         wager().forget(table, house);
+    }
+
+    /**
+     * A private dealer stepping away from an idle table takes their float with them. On a backed
+     * table the tray is the house's, whoever was dealing, so it stays where it is.
+     */
+    public void returnDealerFloat(Table table, Player dealer) {
+        if (!GuildTables.houseBacked(table)) {
+            payTray(table, dealer);
+        }
+    }
+
+    /**
+     * A round that a private dealer walked out of is over: hand them the tray if they are still
+     * around. If they logged off it waits in the tray, marked as theirs, until they are back.
+     */
+    private void settleAbsentFloat(Table table) {
+        UUID owner = table.floatOwner();
+        if (owner == null) {
+            return;
+        }
+        Player online = Bukkit.getPlayer(owner);
+        if (online != null) {
+            payTray(table, online);
+        } else if (trayDenars(table) < 1) {
+            table.setFloatOwner(null);
+        }
+    }
+
+    /** The whole tray to one player who is online, and nobody owed it any more. */
+    private void payTray(Table table, Player to) {
+        table.setFloatOwner(null);
+        wager().begin(table, "dealer float returned")
+                .moveAll(Accounts.tray(table), Accounts.payee(table, to, to.getUniqueId()))
+                .commit();
+        wager().forget(table, table.getId());
+        save(table);
     }
 
     private boolean trySelectCard(Player player) {
@@ -4289,6 +4377,8 @@ public final class TableManager implements Listener, WagerHost {
         data.shufflePolicy = table.shufflePolicy().name();
         data.smallBlind = table.smallBlind();
         data.bigBlind = table.bigBlind();
+        data.floatOwner = table.floatOwner() != null ? table.floatOwner().toString() : null;
+        data.deckConsumed = table.deckConsumed();
         return data;
     }
 
@@ -4552,6 +4642,10 @@ public final class TableManager implements Listener, WagerHost {
         String shufflePolicy;
         Integer smallBlind;
         Integer bigBlind;
+        /** An absent private dealer the tray is being kept for. Absent on older files. */
+        String floatOwner;
+        /** Whether placing the table used a deck. Absent on older files, which all gave one back. */
+        Boolean deckConsumed;
     }
 
     /** One kind of coin held by one bucket. The money half of the old PileData. */

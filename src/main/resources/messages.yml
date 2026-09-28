@@ -51,6 +51,8 @@ place:
   spawn_failed: "#ff5555Could not spawn table displays. The table was not saved."
   done: "#55ff55Placed {game} table."
   picked_up: "#55ff55Picked up the table."
+  pickup_denied: "#ff5555Only the table's owner, its guild leader or staff can pick this table up."
+  pickup_live: "#ff5555Wait until the round is over before picking the table up."
   gui_title: "Select a game"
   gui_poker: "#55ff55Tenceur Hold'em"
   gui_draw: "#55ff55Five-Draw"
@@ -166,6 +168,7 @@ wager:
   paid: "#55ff55The pot went to {player}."
   no_bet_zone: "#ff5555Too close to the shoe or house tray."
   tray_is_funded: "#ff5555The house tray is stocked from the guild bank. Keep your own coins."
+  no_flush: "#ff5555You cannot pay the felt out by hand here. At a free play table only its owner can, between games."
 
 dealer:
   claimed: "#55ff55You are the dealer at this table."
@@ -177,6 +180,7 @@ dealer:
   denied: "#ff5555You cannot deal at this table."
   takeover: "#55ff55You took over as dealer."
   staff_table: "#ff5555This staff table cannot be taken over."
+  float_held: "#ff5555The tray still holds a dealer's float. It goes back to them when they return."
   no_flush: "#ff5555You cannot take the pot by hand during this game."
   need_players: "#ff5555Someone else has to buy in before that item can go on the table."
 
@@ -217,6 +221,7 @@ bet:
   doubled: "#55ff55Doubled."
   split: "#55ff55Split."
   round_end: "#aaaaaaRound ends in {seconds} seconds."
+  forfeit: "#ff5555You left mid-round, so your bet is lost."
 
 label:
   title: "#ffaa00{name}"

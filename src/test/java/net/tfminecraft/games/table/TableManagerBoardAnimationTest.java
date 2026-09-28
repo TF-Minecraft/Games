@@ -71,7 +71,8 @@ class TableManagerBoardAnimationTest extends TableManagerFixture {
     @ParameterizedTest
     @ValueSource(ints = {0, 2})
     void pickupBeforeOrDuringFlightRemovesEveryDisplayAndPreventsLateArrival(int elapsedTicks) {
-        Table table = place(false);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.PAPER));
+        Table table = place(true);
         Runnable cancelled = mock(Runnable.class);
         manager.dealToTable(table, "board", 1, true, cancelled);
         tick(elapsedTicks);
