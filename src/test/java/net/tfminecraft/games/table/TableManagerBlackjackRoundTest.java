@@ -379,6 +379,10 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         clickShoe(player);
         assertNull(table.dealerId(), "nobody else can deal with an absent dealer's float");
         assertTrue(messages(player).contains("dealer.float_held"));
+        hitTable(player);
+        assertSame(table, manager.table(table.getId()), "nor pick the table up and drop it on the floor");
+        assertTrue(messages(player).contains("dealer.float_held"));
+        assertEquals(0, droppedGold());
         assertEquals(16, gold(dealer));
         dealer.reconnect();
         manager.onJoin(new PlayerJoinEvent(dealer, "join"));

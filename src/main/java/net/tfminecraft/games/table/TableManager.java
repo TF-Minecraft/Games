@@ -683,6 +683,11 @@ public final class TableManager implements Listener, WagerHost {
             player.sendMessage(Messages.get("place.pickup_live"));
             return;
         }
+        if (table.floatOwner() != null) {
+            // Picking up would drop an absent dealer's tray at the picker's feet, so it waits for them.
+            player.sendMessage(Messages.get("dealer.float_held"));
+            return;
+        }
         pickup(player, table);
     }
 
