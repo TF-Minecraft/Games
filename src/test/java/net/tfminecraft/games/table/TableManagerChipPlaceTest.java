@@ -80,6 +80,9 @@ class TableManagerChipPlaceTest extends TableManagerFixture {
         assertEquals(3, player.getInventory().getItemInMainHand().getAmount());
         assertFalse(table.actives().contains(player.getUniqueId()));
         assertEquals(0, manager.ownedDenars(table, player.getUniqueId()));
+        player.getInventory().setItemInMainHand(new ItemStack(Material.STONE));
+        assertFalse(click(player, felt(table)).isCancelled(), "ordinary items still pass through");
+        assertNull(player.nextMessage());
         seated.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 2));
         assertTrue(click(seated, felt(table)).isCancelled());
         assertEquals(2, manager.ownedDenars(table, seated.getUniqueId()));

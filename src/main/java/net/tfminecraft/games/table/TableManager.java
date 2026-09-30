@@ -2629,9 +2629,6 @@ public final class TableManager implements Listener, WagerHost {
             player.sendMessage(Messages.get("bet.closed"));
             return true;
         }
-        if (!dealerTray && refuseStake(table, player)) {
-            return true;
-        }
         if (table.isPaying()) {
             return true;
         }
@@ -2664,6 +2661,9 @@ public final class TableManager implements Listener, WagerHost {
             return true;
         }
         if (!dealerTray && refuseBlackjackPlace(player, table, player.getUniqueId(), denars)) {
+            return true;
+        }
+        if (!dealerTray && refuseStake(table, player)) {
             return true;
         }
         UUID bucket = dealerTray ? table.getId() : player.getUniqueId();
