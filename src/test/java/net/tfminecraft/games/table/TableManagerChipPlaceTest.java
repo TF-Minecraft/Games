@@ -67,6 +67,44 @@ class TableManagerChipPlaceTest extends TableManagerFixture {
         assertTrue(table.ledger().isEmpty());
     }
 
+    @Test void aGameRefusingAStakeKeepsTheCoinsButStillTakesAnotherSeatsBet() {
+        Table table = placeQuietly();
+        PlayerMock seated = opponent();
+        stakeCoin(seated, table);
+        when(game.allowStake(any(), argThat(p -> p != null && p.getUniqueId().equals(player.getUniqueId()))))
+                .thenReturn(false);
+        table.startSession();
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 3));
+        assertTrue(click(player, felt(table)).isCancelled());
+        assertEquals("wager.not_in_hand", player.nextMessage());
+        assertEquals(3, player.getInventory().getItemInMainHand().getAmount());
+        assertFalse(table.actives().contains(player.getUniqueId()));
+        assertEquals(0, manager.ownedDenars(table, player.getUniqueId()));
+        seated.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 2));
+        assertTrue(click(seated, felt(table)).isCancelled());
+        assertEquals(2, manager.ownedDenars(table, seated.getUniqueId()));
+    }
+
+    @Test void freePlayStillSeatsAStrangerWhoStakesMidHand() {
+        Table table = placeQuietly();
+        stakeCoin(opponent(), table);
+        table.startSession();
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 3));
+        assertTrue(click(player, felt(table)).isCancelled());
+        assertTrue(table.actives().contains(player.getUniqueId()));
+        assertEquals(1, manager.ownedDenars(table, player.getUniqueId()));
+    }
+
+    @Test void aLiveTableWhoseGameIsNoLongerRegisteredStillTakesAStrangersCoins() {
+        Table table = placeQuietly();
+        stakeCoin(opponent(), table);
+        table.startSession();
+        games.when(() -> GamesRegistry.of("freeplay")).thenReturn(null);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 3));
+        assertTrue(click(player, felt(table)).isCancelled());
+        assertEquals(1, manager.ownedDenars(table, player.getUniqueId()));
+    }
+
     @Test void coinsCannotBeStakedOnTheShoe() {
         Cache.tableLayouts.put("freeplay", new TableLayout(Cache.pokerCardSet, "Cards", "icon", 6, Map.of(),
                 new TableLayout.FeltRing(0.3, 1.2), null, null, 0.5));

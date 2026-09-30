@@ -104,6 +104,7 @@ class PokerGameTest extends GameScenarioFixture {
         act("check");
         assertEquals(carol.getUniqueId(), table.actor());
         contribute(carol, 5);
+        broke.add(carol.getUniqueId());
         act("call");
         assertEquals(alice.getUniqueId(), table.actor());
         contribute(alice, 30);
@@ -479,11 +480,66 @@ class PokerGameTest extends GameScenarioFixture {
     }
 
     @Test
+    void shortCallIsRefusedWhileChipsRemainInPocketAndCapsOnlyOnceAllIn() {
+        start(alice, bob, carol);
+        contribute(bob, 10);
+        act("raise");
+        assertEquals(carol.getUniqueId(), table.actor());
+        act("call");
+        assertEquals(carol.getUniqueId(), table.actor(), "a free call must not pass the turn");
+        assertTrue(((PlayerMock) carol).nextMessage().startsWith("poker.need_call"));
+        assertTrue(game.extraLabel(table).contains("n, 10"));
+        contribute(carol, 3);
+        act("call");
+        assertEquals(carol.getUniqueId(), table.actor());
+        assertTrue(((PlayerMock) carol).nextMessage().contains("n, 7"));
+        broke.add(carol.getUniqueId());
+        act("call");
+        assertEquals(alice.getUniqueId(), table.actor());
+        assertEquals("poker.called", ((PlayerMock) carol).nextMessage());
+    }
+
+    @Test
+    void onlySeatsStillInALiveHandMayStake() {
+        Player stranger = MockBukkit.getMock().addPlayer();
+        assertTrue(game.allowStake(table, stranger), "an idle table takes anyone's chips");
+        seat(alice, bob, carol);
+        table.startSession();
+        game.onSessionStart(table);
+        assertTrue(game.allowStake(table, alice), "seats may stake while holes are dealt");
+        assertFalse(game.allowStake(table, stranger), "a stranger cannot buy into a dealt hand");
+        drain();
+        assertEquals(bob.getUniqueId(), table.actor());
+        assertTrue(game.allowStake(table, bob));
+        act("fold");
+        assertTrue(table.live());
+        assertFalse(game.allowStake(table, bob), "a folded seat cannot feed the pot");
+        assertTrue(game.allowStake(table, carol));
+        assertFalse(game.allowStake(table, stranger));
+    }
+
+    @Test
+    void chipsPastTheBetAreARaiseEvenWhenCalledACheckOrCall() {
+        start(alice, bob, carol);
+        contribute(bob, 10);
+        act("check");
+        assertEquals("poker.raised[poker.raised, n, 10]", ((PlayerMock) bob).nextMessage());
+        assertEquals(carol.getUniqueId(), table.actor());
+        contribute(carol, 25);
+        act("call");
+        assertEquals("poker.raised[poker.raised, n, 25]", ((PlayerMock) carol).nextMessage());
+        contribute(alice, 25);
+        act("call");
+        assertEquals(bob.getUniqueId(), table.actor(), "the first bettor has to answer the raise");
+    }
+
+    @Test
     void allInSeatIsSkippedWhileTheOthersKeepRaising() {
         start(alice, bob, carol);
         contribute(bob, 10);
         act("raise");
         contribute(carol, 3);
+        broke.add(carol.getUniqueId());
         act("call");
         assertEquals(alice.getUniqueId(), table.actor());
         contribute(alice, 20);
@@ -680,6 +736,8 @@ abstract class GameScenarioFixture {
     final Map<UUID, Integer> invested = new HashMap<>();
     final Map<Integer, Map<UUID, Integer>> contributions = new HashMap<>();
     final List<UUID> dealt = new ArrayList<>();
+    /** Seats with nothing left in their pockets to bet, so a short call is an all in. */
+    final java.util.Set<UUID> broke = new java.util.HashSet<>();
     private MockedStatic<TableManager> managers;
     private MockedStatic<WagerEngine> wagers;
     private MockedStatic<Messages> messages;
@@ -704,6 +762,8 @@ abstract class GameScenarioFixture {
         carol = MockBukkit.getMock().addPlayer();
         when(manager.table(table.getId())).thenReturn(table);
         when(wager.totalsExcept(table, table.getId())).thenAnswer(call -> new HashMap<>(invested));
+        when(wager.allIn(eq(table), any(Player.class))).thenAnswer(call ->
+                broke.contains(call.getArgument(1, Player.class).getUniqueId()));
         when(wager.owned(eq(table), any(UUID.class), anyInt())).thenAnswer(call ->
                 contributions.getOrDefault(call.getArgument(2), Map.of()).getOrDefault(call.getArgument(1), 0));
         doAnswer(call -> {

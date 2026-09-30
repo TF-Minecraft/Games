@@ -82,6 +82,15 @@ class WagerEngineTest {
     }
 
     @Test
+    void allInOnlyOnceNothingStakeableIsLeftInPocket() {
+        assertTrue(engine.allIn(table, winner));
+        winner.getInventory().addItem(new ItemStack(Material.STONE, 5));
+        assertTrue(engine.allIn(table, winner), "items with no coin value are not chips");
+        winner.getInventory().addItem(coin(1));
+        assertFalse(engine.allIn(table, winner));
+    }
+
+    @Test
     void restorePreservesStreetPlacementAndSeparatesTrayFromPot() {
         UUID owner = winner.getUniqueId();
         table.setStreet(3);

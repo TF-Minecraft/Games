@@ -123,6 +123,10 @@ public final class PokerGame implements Game {
         Street street = streets.get(table.getId());
         UUID id = player.getUniqueId();
         int contrib = streetContrib(table, id);
+        if (contrib > street.currentBet && ("check".equals(word) || "call".equals(word))) {
+            // Chips past the bet are a bet whatever it is called, so the others have to answer it.
+            word = "raise";
+        }
         switch (word) {
             case "check" -> {
                 if (contrib < street.currentBet) {
@@ -133,6 +137,12 @@ public final class PokerGame implements Game {
             }
             case "call" -> {
                 if (contrib < street.currentBet) {
+                    // Calling short is only an all in: chips still in pockets have to go down first.
+                    if (!WagerEngine.get().allIn(table, player)) {
+                        player.sendMessage(Messages.get("poker.need_call",
+                                "n", String.valueOf(street.currentBet - contrib)));
+                        return;
+                    }
                     street.capped.add(id);
                 } else {
                     street.capped.remove(id);
@@ -160,6 +170,17 @@ public final class PokerGame implements Game {
         }
         street.acted.add(id);
         finishOrAdvance(table, new ArrayList<>(table.actives()), true);
+    }
+
+    /** A live hand takes money only from seats still in it; anyone else waits for the next one. */
+    @Override
+    public boolean allowStake(Table table, Player player) {
+        if (!table.live()) {
+            return true;
+        }
+        UUID id = player.getUniqueId();
+        Street street = streets.get(table.getId());
+        return table.actives().contains(id) && (street == null || !street.folded.contains(id));
     }
 
     @Override

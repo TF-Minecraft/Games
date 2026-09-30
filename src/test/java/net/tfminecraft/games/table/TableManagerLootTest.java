@@ -93,6 +93,19 @@ class TableManagerLootTest extends TableManagerFixture {
         assertEquals("wager.busy", player.nextMessage(), "the refused placement keeps the arm");
     }
 
+    @Test void lootTheGameRefusesStaysInHand() {
+        Table table = armedTable(7);
+        table.actives().remove(player.getUniqueId());
+        when(game.allowStake(any(), argThat(p -> p != null && p.getUniqueId().equals(player.getUniqueId()))))
+                .thenReturn(false);
+        table.startSession();
+        assertTrue(click(player, table.getOrigin().clone().add(0.75, 0, 0)).isCancelled());
+        assertEquals("wager.not_in_hand", player.nextMessage());
+        assertEquals(2, diamonds());
+        assertEquals(1, table.ledger().total());
+        assertFalse(table.actives().contains(player.getUniqueId()));
+    }
+
     @Test void aDeclaredValueTooLargeToAddUpTakesNothing() {
         Table table = armedTable(2_000_000_000);
         assertTrue(click(player, table.getOrigin().clone().add(0.75, 0, 0)).isCancelled());
