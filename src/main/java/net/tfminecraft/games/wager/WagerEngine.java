@@ -262,6 +262,11 @@ public final class WagerEngine {
         MoneyAccount payee = Accounts.payee(table, winner, owner);
         List<MoneyAccount> sources = winSources(table, dealer, dealerBacked);
 
+        // Bank/mint top-ups must also make the net profit and tax exactly, not copy a large pouch.
+        for (ItemStack coin : ChipItems.smallestCoins(template)) {
+            if (ChipItems.unitDenars(coin) < ChipItems.unitDenars(template)) template = coin;
+        }
+
         int trayBefore = tray(table);
         int paidNet = 0;
         if (net > 0) {

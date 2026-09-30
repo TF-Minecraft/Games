@@ -22,6 +22,9 @@ import net.tfminecraft.games.table.Table;
 import net.tfminecraft.games.table.TableManager;
 import net.tfminecraft.games.voice.RpNames;
 import net.tfminecraft.games.wager.WagerEngine;
+import net.tfminecraft.games.wager.Accounts;
+import net.tfminecraft.games.wager.MoneyTx;
+import net.tfminecraft.games.wager.TxResult;
 
 /**
  * Hold'em seats, button, holes, streets, and board deal.
@@ -36,6 +39,7 @@ public final class PokerGame implements Game {
 
     private static final class Street {
         int currentBet;
+        boolean dealing = true;
         final Set<UUID> folded = new HashSet<>();
         final Set<UUID> acted = new HashSet<>();
         final Set<UUID> capped = new HashSet<>();
@@ -73,11 +77,23 @@ public final class PokerGame implements Game {
 
     @Override
     public void onSessionStart(Table table) {
+        if (table.poker().enabled()) {
+            table.actives().removeIf(id -> table.poker().stack(id) < 1);
+        }
+        ensureButton(table);
         List<Player> online = seatedOnline(table);
         if (online.size() < 2) {
             for (Player player : online) {
                 player.sendMessage(Messages.get("poker.need_players"));
             }
+            TableManager.get().endSession(table);
+            return;
+        }
+        Street street = new Street();
+        streets.put(table.getId(), street);
+        table.setStreet(1);
+        if (!postForcedBets(table, street)) {
+            streets.remove(table.getId());
             TableManager.get().endSession(table);
             return;
         }
@@ -88,12 +104,13 @@ public final class PokerGame implements Game {
         table.setStreet(1);
         table.setActor(null);
         TableManager.get().refreshLabel(table);
-        dealHoles(table, holeQueue(table), 0);
+        dealHoles(table, holeQueue(table), 0, street);
     }
 
     @Override
     public void onSessionEnd(Table table) {
         streets.remove(table.getId());
+        table.poker().abortHand();
         TableManager manager = TableManager.get();
         for (UUID id : new ArrayList<>(table.getHands().keySet())) {
             manager.muckPlayer(table, id);
@@ -103,6 +120,7 @@ public final class PokerGame implements Game {
 
     @Override
     public void onTableRemoved(Table table) {
+        table.poker().reset();
         streets.remove(table.getId());
     }
 
@@ -114,12 +132,16 @@ public final class PokerGame implements Game {
     public boolean allowPlayChat(Table table, Player player) {
         UUID id = player.getUniqueId();
         // A leaver stays the actor until their refund lands, but can no longer act.
-        return bettingPhase(table.phase()) && id.equals(table.actor()) && table.actives().contains(id);
+        Street street = streets.get(table.getId());
+        return !table.isPaying() && street != null && !street.capped.contains(id)
+                && !street.folded.contains(id) && bettingPhase(table.phase())
+                && id.equals(table.actor()) && table.actives().contains(id);
     }
 
     /** TableManager hands words only to the actor that allowPlayChat accepted. */
     @Override
     public void onPlayWord(Table table, Player player, String word) {
+        if (!allowPlayChat(table, player)) return;
         Street street = streets.get(table.getId());
         UUID id = player.getUniqueId();
         int contrib = streetContrib(table, id);
@@ -133,21 +155,26 @@ public final class PokerGame implements Game {
                     player.sendMessage(Messages.get("poker.cannot_check"));
                     return;
                 }
-                player.sendMessage(Messages.get("poker.checked"));
+                announceAction(table, player, "checked");
             }
             case "call" -> {
                 if (contrib < street.currentBet) {
                     // Calling short is only an all in: chips still in pockets have to go down first.
-                    if (!WagerEngine.get().allIn(table, player)) {
+                    if (table.poker().enabled()) {
+                        table.poker().bet(id, street.currentBet - contrib);
+                        contrib = streetContrib(table, id);
+                    }
+                    if (contrib < street.currentBet && !isAllIn(table, player)) {
                         player.sendMessage(Messages.get("poker.need_call",
                                 "n", String.valueOf(street.currentBet - contrib)));
                         return;
                     }
-                    street.capped.add(id);
+                    if (isAllIn(table, player)) street.capped.add(id);
                 } else {
                     street.capped.remove(id);
                 }
-                player.sendMessage(Messages.get("poker.called"));
+                if (isAllIn(table, player)) street.capped.add(id);
+                announceAction(table, player, "called");
             }
             case "raise" -> {
                 if (contrib <= street.currentBet) {
@@ -156,13 +183,35 @@ public final class PokerGame implements Game {
                 }
                 street.currentBet = contrib;
                 street.acted.clear();
-                street.capped.remove(id);
-                player.sendMessage(Messages.get("poker.raised", "n", String.valueOf(street.currentBet)));
+                if (isAllIn(table, player)) street.capped.add(id);
+                else street.capped.remove(id);
+                tellSeated(table, Messages.get("poker.action_raised", "name", RpNames.of(id),
+                        "n", String.valueOf(street.currentBet)));
+            }
+            case "allin" -> {
+                if (table.poker().enabled()) {
+                    table.poker().bet(id, table.poker().stack(id));
+                } else {
+                    var pockets = Accounts.pockets(table, player);
+                    TxResult result = WagerEngine.get().begin(table, "poker all in")
+                            .move(pockets, Accounts.bucket(table, id), pockets.available()).commit();
+                    if (!result.ok()) {
+                        player.sendMessage(Messages.get(result.messageKey()));
+                        return;
+                    }
+                }
+                contrib = streetContrib(table, id);
+                if (contrib > street.currentBet) {
+                    street.currentBet = contrib;
+                    street.acted.clear();
+                }
+                street.capped.add(id);
+                announceAction(table, player, "allin");
             }
             case "fold" -> {
                 street.folded.add(id);
                 TableManager.get().muckPlayer(table, id);
-                player.sendMessage(Messages.get("poker.folded"));
+                announceAction(table, player, "folded");
             }
             default -> {
                 return;
@@ -175,12 +224,9 @@ public final class PokerGame implements Game {
     /** A live hand takes money only from seats still in it; anyone else waits for the next one. */
     @Override
     public boolean allowStake(Table table, Player player) {
-        if (!table.live()) {
-            return true;
-        }
-        UUID id = player.getUniqueId();
-        Street street = streets.get(table.getId());
-        return table.actives().contains(id) && (street == null || !street.folded.contains(id));
+        if (table.poker().enabled()) return false;
+        if (!table.live()) return true;
+        return allowPlayChat(table, player);
     }
 
     @Override
@@ -211,8 +257,16 @@ public final class PokerGame implements Game {
     @Override
     public String extraLabel(Table table) {
         List<String> lines = new ArrayList<>();
-        int small = table.smallBlind();
-        int big = table.bigBlind();
+        int small = blind(table, table.smallBlind());
+        int big = blind(table, table.bigBlind());
+        if (table.poker().enabled()) {
+            for (UUID id : table.actives()) {
+                lines.add(Messages.get("poker.stack", "name", RpNames.of(id),
+                        "n", String.valueOf(table.poker().stack(id))));
+            }
+            lines.add(Messages.get("poker.chip_pot", "n", String.valueOf(
+                    table.poker().invested().values().stream().mapToInt(Integer::intValue).sum())));
+        }
         if (small > 0 || big > 0) {
             lines.add(Messages.get("label.blinds",
                     "small", String.valueOf(small),
@@ -230,7 +284,7 @@ public final class PokerGame implements Game {
             if (actor != null) {
                 lines.add(Messages.get("label.turn", "name", RpNames.of(actor)));
                 Street street = streets.get(table.getId());
-                int toCall = Math.max(0, street.currentBet - streetContrib(table, actor));
+                int toCall = street == null ? 0 : Math.max(0, street.currentBet - streetContrib(table, actor));
                 lines.add(Messages.get("label.holdem_tocall", "n", String.valueOf(toCall)));
             }
         }
@@ -253,6 +307,10 @@ public final class PokerGame implements Game {
 
     @Override
     public void onLeave(Table table, Player player) {
+        if (table.poker().enabled()) {
+            leaveTournament(table, player);
+            return;
+        }
         TableManager manager = TableManager.get();
         UUID leaver = player.getUniqueId();
         List<UUID> before = new ArrayList<>(table.actives());
@@ -291,6 +349,7 @@ public final class PokerGame implements Game {
             WagerEngine.get().sweepPot(table, Bukkit.getPlayer(rest), rest, flights, "hand abandoned");
         }
         boolean stop = live && table.actives().size() < 2;
+        if (stop) streets.remove(table.getId());
         manager.flushPiles(table, flights, () -> {
             if (stop) {
                 TableManager.get().endSession(table);
@@ -325,9 +384,9 @@ public final class PokerGame implements Game {
         return queue;
     }
 
-    private void dealHoles(Table table, List<Player> queue, int index) {
+    private void dealHoles(Table table, List<Player> queue, int index, Street street) {
         Table still = TableManager.get().table(table.getId());
-        if (still == null || !still.live()) {
+        if (still == null || !still.live() || streets.get(table.getId()) != street) {
             return;
         }
         if (index >= queue.size()) {
@@ -335,14 +394,24 @@ public final class PokerGame implements Game {
             return;
         }
         Player player = queue.get(index);
-        TableManager.get().dealToPlayer(still, player, 1, () -> dealHoles(still, queue, index + 1));
+        if (!still.actives().contains(player.getUniqueId())) {
+            dealHoles(still, queue, index + 1, street);
+            return;
+        }
+        TableManager.get().dealToPlayer(still, player, 1, () -> dealHoles(still, queue, index + 1, street));
     }
 
     private void startStreet(Table table) {
-        Street street = new Street();
-        streets.put(table.getId(), street);
-        table.setActor(leftOfButton(table, street));
-        TableManager.get().refreshLabel(table);
+        Street street = streets.get(table.getId());
+        if (street == null) return;
+        street.dealing = false;
+        UUID first = leftOfButton(table, street);
+        if (table.smallBlind() > 0 || table.bigBlind() > 0) {
+            UUID big = bigBlindSeat(table);
+            first = SeatOrder.first(SeatOrder.after(table, big), id -> betting(street, id));
+        }
+        table.setActor(first);
+        finishOrAdvance(table, new ArrayList<>(table.actives()), false);
     }
 
     private static boolean bettingPhase(String phase) {
@@ -371,10 +440,12 @@ public final class PokerGame implements Game {
         if (streets.get(table.getId()) != street) {
             return;
         }
+        street.dealing = false;
         street.currentBet = 0;
         street.acted.clear();
-        street.capped.clear();
+        table.poker().nextStreet();
         table.setActor(leftOfButton(table, street));
+        finishOrAdvance(table, new ArrayList<>(table.actives()), false);
         TableManager.get().refreshLabel(table);
     }
 
@@ -405,11 +476,11 @@ public final class PokerGame implements Game {
             cards = 1;
             announce = "poker.river";
         }
+        street.dealing = true;
         table.setPhase(nextPhase);
         table.setStreet(nextStreet);
         street.currentBet = 0;
         street.acted.clear();
-        street.capped.clear();
         tellSeated(table, Messages.get(announce));
         TableManager.get().refreshLabel(table);
         TableManager.get().dealToTable(table, "board", cards, true, () -> resumeBetting(table, street));
@@ -441,6 +512,9 @@ public final class PokerGame implements Game {
             }
         }
         List<Card> board = boardCards(table);
+        for (String line : HandTalk.allHands(table.getGameId(), live, id -> cardsOf(table.heldBy(id)))) {
+            tellSeated(table, line);
+        }
         for (String line : HandTalk.bestHand(table.getGameId(), live, id -> {
             List<Card> cards = new ArrayList<>(board);
             cards.addAll(cardsOf(table.heldBy(id)));
@@ -468,8 +542,9 @@ public final class PokerGame implements Game {
     }
 
     private void payPots(Table table, List<UUID> live, List<Card> board, String gameId) {
-        // The ledger only reports owners with money on the felt, so every total is positive.
-        Map<UUID, Integer> invested = WagerEngine.get().totalsExcept(table, table.getId());
+        // Economy stakes and virtual chip investments both report only positive totals.
+        Map<UUID, Integer> invested = table.poker().enabled() ? table.poker().invested()
+                : WagerEngine.get().totalsExcept(table, table.getId());
         TreeSet<Integer> levels = new TreeSet<>(invested.values());
         if (levels.isEmpty()) {
             finishHand(table);
@@ -479,6 +554,7 @@ public final class PokerGame implements Game {
         // Showdown supplies at least two live seats, all still in the seating order.
         UUID leftover = SeatOrder.leftOfButton(table, live).getFirst();
         int previous = 0;
+        int awarded = 0;
         for (int level : levels) {
             int covered = 0;
             for (int put : invested.values()) {
@@ -501,9 +577,21 @@ public final class PokerGame implements Game {
             List<UUID> winners = rankSeats(table, contestants, board, gameId);
             leftover = winners.getFirst();
             announceWinners(table, winners);
-            payEven(table, flights, winners, amount);
+            awarded += amount;
+            if (table.poker().enabled()) {
+                int share = amount / winners.size();
+                int rem = amount % winners.size();
+                for (UUID winner : winners) table.poker().award(winner, share + (rem-- > 0 ? 1 : 0));
+            } else payEven(table, flights, winners, amount);
         }
         // Whatever the levels could not split in whole coins goes to one seat.
+        if (table.poker().enabled()) {
+            int total = invested.values().stream().mapToInt(Integer::intValue).sum();
+            table.poker().award(leftover, total - awarded);
+            table.poker().finishHand();
+            finishHand(table);
+            return;
+        }
         WagerEngine.get().sweepPot(table, Bukkit.getPlayer(leftover), leftover, flights, "pot remainder");
         WagerEngine.get().announceWins(table, "poker");
         finishAfterPayout(table, flights);
@@ -549,6 +637,7 @@ public final class PokerGame implements Game {
     }
 
     private void finishHand(Table table) {
+        table.poker().finishHand();
         TableManager.get().endSession(table);
         passButton(table);
         TableManager.get().refreshLabel(table);
@@ -574,7 +663,8 @@ public final class PokerGame implements Game {
     }
 
     private static int streetContrib(Table table, UUID owner) {
-        return WagerEngine.get().owned(table, owner, table.street());
+        return table.poker().enabled() ? table.poker().contribution(owner)
+                : WagerEngine.get().owned(table, owner, table.street());
     }
 
     private static List<UUID> liveSeats(Table table, Street street) {
@@ -594,7 +684,7 @@ public final class PokerGame implements Game {
      */
     private static boolean streetComplete(Table table, Street street) {
         for (UUID id : liveSeats(table, street)) {
-            if (!street.capped.contains(id) && !street.acted.contains(id)) {
+            if (!street.capped.contains(id) && (!street.acted.contains(id) || streetContrib(table, id) < street.currentBet)) {
                 return false;
             }
         }
@@ -607,8 +697,8 @@ public final class PokerGame implements Game {
      */
     private void finishOrAdvance(Table table, List<UUID> seating, boolean advance) {
         Street street = streets.get(table.getId());
-        // No street means the cards are still being dealt, or the hand is already settled.
-        if (street == null) {
+        // Dealing animations cannot start another street, and a settled hand has no street.
+        if (street == null || street.dealing) {
             TableManager.get().refreshLabel(table);
             return;
         }
@@ -642,6 +732,14 @@ public final class PokerGame implements Game {
             tellSeated(table, Messages.get("poker.win_fold", "name", RpNames.of(winner)));
         }
         List<PayoutFlight> flights = new ArrayList<>();
+        if (table.poker().enabled()) {
+            int pot = table.poker().invested().values().stream().mapToInt(Integer::intValue).sum();
+            if (winner != null) table.poker().award(winner, pot);
+            else table.poker().abortHand();
+            table.poker().finishHand();
+            finishHand(table);
+            return;
+        }
         Player dest = winner != null ? Bukkit.getPlayer(winner) : null;
         if (dest != null) {
             WagerEngine.get().sweepPot(table, dest, winner, flights, "fold win");
@@ -651,6 +749,88 @@ public final class PokerGame implements Game {
         }
         WagerEngine.get().announceWins(table, "poker");
         finishAfterPayout(table, flights);
+    }
+
+    private static boolean isAllIn(Table table, Player player) {
+        return table.poker().enabled() ? table.poker().stack(player.getUniqueId()) == 0
+                : WagerEngine.get().allIn(table, player);
+    }
+
+    private static int blind(Table table, int base) {
+        return table.poker().blind(base, System.currentTimeMillis());
+    }
+
+    private static UUID bigBlindSeat(Table table) {
+        return table.actives().size() == 2 ? SeatOrder.next(table, table.dealerId())
+                : SeatOrder.next(table, SeatOrder.next(table, table.dealerId()));
+    }
+
+    private boolean postForcedBets(Table table, Street street) {
+        PokerTournament tournament = table.poker();
+        int small = blind(table, table.smallBlind());
+        int big = blind(table, table.bigBlind());
+        UUID smallSeat = table.actives().size() == 2 ? table.dealerId() : SeatOrder.next(table, table.dealerId());
+        UUID bigSeat = bigBlindSeat(table);
+        if (tournament.enabled()) {
+            tournament.start(System.currentTimeMillis());
+            for (UUID id : table.actives()) tournament.bet(id, tournament.ante());
+            tournament.nextStreet(); // Antes are dead money, not a call credit.
+            tournament.bet(smallSeat, small);
+            tournament.bet(bigSeat, big);
+        } else if (small > 0 || big > 0) {
+            MoneyTx tx = WagerEngine.get().begin(table, "poker blinds");
+            for (UUID id : table.actives()) {
+                int required = id.equals(smallSeat) ? small : id.equals(bigSeat) ? big : 0;
+                int need = Math.max(0, required - streetContrib(table, id));
+                Player player = Bukkit.getPlayer(id);
+                if (player == null) { tellSeated(table, Messages.get("poker.blind_failed")); return false; }
+                if (need > 0) {
+                    int available = Accounts.pockets(table, player).available();
+                    if (available <= need) tx.move(Accounts.pockets(table, player), Accounts.bucket(table, id), available);
+                    else tx.move(Accounts.pockets(table, player), Accounts.bucket(table, id), need);
+                }
+            }
+            TxResult result = tx.commit();
+            if (!result.ok()) { tellSeated(table, Messages.get("poker.blind_failed")); return false; }
+        }
+        street.currentBet = big;
+        if (small > big) street.currentBet = small;
+        if (small > 0 || big > 0 || tournament.enabled()) {
+            for (Player player : seatedOnline(table)) {
+                if (isAllIn(table, player)) street.capped.add(player.getUniqueId());
+            }
+        }
+        return true;
+    }
+
+    public boolean betChips(Table table, Player player, int amount) {
+        if (!table.poker().enabled() || !allowPlayChat(table, player) || amount < 1
+                || amount > table.poker().stack(player.getUniqueId())) return false;
+        table.poker().bet(player.getUniqueId(), amount);
+        TableManager.get().refreshLabel(table);
+        return true;
+    }
+
+    private void leaveTournament(Table table, Player player) {
+        UUID id = player.getUniqueId();
+        if (!table.poker().started()) {
+            List<PayoutFlight> flights = new ArrayList<>();
+            WagerEngine.get().refund(table, id, player, 0, flights, "tournament withdrawal");
+            TableManager.get().flushPiles(table, flights, null);
+        }
+        Street street = streets.get(table.getId());
+        if (street != null) street.folded.add(id);
+        table.poker().remove(id);
+        List<UUID> before = new ArrayList<>(table.actives());
+        table.actives().remove(id);
+        if (id.equals(table.dealerId())) {
+            table.setDealerId(SeatOrder.first(SeatOrder.after(before, id), table.actives()::contains));
+        }
+        finishOrAdvance(table, before, false);
+    }
+
+    private static void announceAction(Table table, Player player, String action) {
+        tellSeated(table, Messages.get("poker.action_" + action, "name", RpNames.of(player.getUniqueId())));
     }
 
     private static void tellSeated(Table table, String message) {

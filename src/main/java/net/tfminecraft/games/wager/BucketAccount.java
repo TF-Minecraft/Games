@@ -79,7 +79,10 @@ public final class BucketAccount implements MoneyAccount {
             slots.add(new CoinPlanner.Slot(stake.unit(), stake.count()));
         }
         int[] picks = CoinPlanner.exact(slots, denars);
-        return picks == null ? null : new BucketWithdrawal(usable, picks, denars);
+        if (picks != null) return new BucketWithdrawal(usable, picks, denars);
+        List<Stake> changed = withChange(usable);
+        picks = CoinPlanner.exact(slots(changed), denars);
+        return picks == null ? null : new ChangedWithdrawal(usable, changed, picks, denars);
     }
 
     @Override
@@ -113,7 +116,72 @@ public final class BucketAccount implements MoneyAccount {
         for (Stake stake : spendable()) {
             slots.add(new CoinPlanner.Slot(stake.unit(), stake.count()));
         }
-        return CoinPlanner.best(slots, denars);
+        int best = CoinPlanner.best(slots, denars);
+        return best == denars ? best : Math.max(best, CoinPlanner.best(slots(withChange(spendable())), denars));
+    }
+
+    private static List<CoinPlanner.Slot> slots(List<Stake> stakes) {
+        List<CoinPlanner.Slot> slots = new ArrayList<>();
+        for (Stake stake : stakes) slots.add(new CoinPlanner.Slot(stake.unit(), stake.count()));
+        return slots;
+    }
+
+    /** Pure planning: never exchange coins until the complete transaction has been accepted. */
+    private static List<Stake> withChange(List<Stake> originals) {
+        List<Stake> out = new ArrayList<>();
+        for (Stake original : originals) {
+            List<ItemStack> coins = original.unit() == ChipItems.unitDenars(original.item())
+                    ? ChipItems.smallestCoins(original.item()) : List.of();
+            if (coins.isEmpty()) {
+                out.add(new Stake(original.item(), original.typeKey(), original.unit(),
+                        original.count(), original.streetId()));
+            } else {
+                for (ItemStack coin : coins) {
+                    Stake made = new Stake(coin.clone(), ChipItems.typeKey(coin), ChipItems.unitDenars(coin),
+                            Math.multiplyExact(coin.getAmount(), original.count()), original.streetId());
+                    made.item().setAmount(1);
+                    if (original.placed()) made.setSpot(original.x(), original.z());
+                    out.add(made);
+                }
+            }
+        }
+        return out;
+    }
+
+    private final class ChangedWithdrawal implements Withdrawal {
+        private final List<Stake> originals;
+        private final List<Stake> changed;
+        private final int[] counts;
+        private final int denars;
+
+        ChangedWithdrawal(List<Stake> originals, List<Stake> changed, int[] counts, int denars) {
+            this.originals = originals;
+            this.changed = changed;
+            this.counts = counts;
+            this.denars = denars;
+        }
+
+        @Override public int denars() { return denars; }
+        @Override public List<Stake> preview() {
+            List<Stake> out = new ArrayList<>();
+            for (int i = 0; i < changed.size(); i++) {
+                Stake coin = changed.get(i);
+                if (counts[i] > 0) out.add(new Stake(coin.item(), coin.typeKey(), coin.unit(), counts[i], coin.streetId()));
+            }
+            return out;
+        }
+        @Override public List<Stake> take() {
+            for (Stake original : originals) original.split(original.count());
+            table.ledger().tidy();
+            List<Stake> out = new ArrayList<>();
+            for (int i = 0; i < changed.size(); i++) {
+                Stake coin = changed.get(i);
+                if (counts[i] > 0) out.add(coin.split(counts[i]));
+                if (coin.count() > 0) table.ledger().put(owner, coin,
+                        coin.placed() ? coin.x() : null, coin.placed() ? coin.z() : null);
+            }
+            return out;
+        }
     }
 
     /** The live stakes a set amount can come out of, which is all of them unless a street was named. */

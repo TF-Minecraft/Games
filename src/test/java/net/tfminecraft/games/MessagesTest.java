@@ -69,6 +69,16 @@ class MessagesTest {
     }
 
     @Test
+    void bundledNewMessagesFillMissingKeysWithoutReplacingCustomText() throws Exception {
+        Path file = directory.resolve("messages.yml");
+        Files.writeString(file, "poker:\n  action_called: 'Custom {name}'\n");
+        Messages.load(file.toFile());
+        assertEquals("Custom Alice", Messages.get("poker.action_called", "name", "Alice"));
+        assertTrue(Messages.getRaw("poker.action_allin").contains("{name}"));
+        assertFalse(Messages.getRaw("poker.action_allin").equals("poker.action_allin"));
+    }
+
+    @Test
     void keysAreShownAsTheyAreBeforeMessagesAreLoaded() throws Exception {
         config.set(null, null);
         assertEquals("place.armed", Messages.getRaw("place.armed"));
