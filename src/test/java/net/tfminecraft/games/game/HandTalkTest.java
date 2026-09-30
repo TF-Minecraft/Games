@@ -43,6 +43,28 @@ class HandTalkTest {
         }
     }
 
+    @Test
+    void showdownChatIncludesBothPlayersActualHoleCards() {
+        UUID first = UUID.randomUUID(), second = UUID.randomUUID();
+        try (MockedStatic<Messages> messages = mockStatic(Messages.class);
+                MockedStatic<RpNames> names = mockStatic(RpNames.class)) {
+            names.when(() -> RpNames.of(first)).thenReturn("First");
+            names.when(() -> RpNames.of(second)).thenReturn("Second");
+            messages.when(() -> Messages.getRaw("hand.card")).thenReturn("{rank} of {suit}");
+            messages.when(() -> Messages.getRaw("hand.card_join")).thenReturn(", ");
+            messages.when(() -> Messages.get(eq("hand.shown"), eq("name"), anyString(), eq("cards"), anyString()))
+                    .thenAnswer(call -> call.getArgument(2) + ": " + call.getArgument(4));
+            List<String> lines = HandTalk.allHands(null, List.of(first, second),
+                    id -> id.equals(first) ? hand("oseni", 1, 1) : hand("cerrith", 2, 3));
+            assertEquals(2, lines.size());
+            assertTrue(lines.get(0).startsWith("First:"));
+            assertTrue(lines.get(0).contains("Ace"));
+            assertTrue(lines.get(1).startsWith("Second:"));
+            assertTrue(lines.get(1).contains("2 of"));
+            assertTrue(lines.get(1).contains("3 of"));
+        }
+    }
+
     private List<Card> hand(String suit, int... ranks) {
         List<Card> cards = new ArrayList<>();
         for (int rank : ranks) cards.add(new Card(suit + rank, suit, rank, false, ""));

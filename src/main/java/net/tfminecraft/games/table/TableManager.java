@@ -2008,8 +2008,8 @@ public final class TableManager implements Listener, WagerHost {
         String key = raw.toLowerCase(Locale.ROOT);
         if (key.equals("hit") || key.equals("stand") || key.equals("double") || key.equals("split")
                 || key.equals("check") || key.equals("call") || key.equals("fold") || key.equals("raise")
-                || key.equals("draw")) {
-            return key;
+                || key.equals("draw") || key.equals("allin") || key.equals("all in")) {
+            return key.equals("all in") ? "allin" : key;
         }
         return null;
     }
@@ -2691,7 +2691,8 @@ public final class TableManager implements Listener, WagerHost {
         if (game == null || game.allowStake(table, player)) {
             return false;
         }
-        player.sendMessage(Messages.get("wager.not_in_hand"));
+        player.sendMessage(Messages.get("poker".equalsIgnoreCase(table.getGameId())
+                ? "poker.stake_closed" : "wager.not_in_hand"));
         return true;
     }
 
@@ -4396,6 +4397,11 @@ public final class TableManager implements Listener, WagerHost {
         data.maxBet = table.maxBet();
         data.maxBoxes = table.maxBoxes();
         data.shufflePolicy = table.shufflePolicy().name();
+        data.pokerBuyIn = table.poker().buyIn();
+        data.pokerChips = table.poker().startingChips();
+        data.pokerRebuys = table.poker().maxRebuys();
+        data.pokerAnte = table.poker().ante();
+        data.pokerBlindMinutes = table.poker().blindMinutes();
         data.smallBlind = table.smallBlind();
         data.bigBlind = table.bigBlind();
         data.floatOwner = table.floatOwner() != null ? table.floatOwner().toString() : null;
@@ -4441,6 +4447,8 @@ public final class TableManager implements Listener, WagerHost {
             }
         }
         applyHouseData(table, data);
+        table.poker().configure(data.pokerBuyIn, data.pokerChips > 0 ? data.pokerChips : 1000,
+                data.pokerRebuys, data.pokerAnte, data.pokerBlindMinutes);
         return table;
     }
 
@@ -4661,6 +4669,7 @@ public final class TableManager implements Listener, WagerHost {
         int maxBet;
         int maxBoxes;
         String shufflePolicy;
+        int pokerBuyIn, pokerChips, pokerRebuys, pokerAnte, pokerBlindMinutes;
         Integer smallBlind;
         Integer bigBlind;
         /** An absent private dealer the tray is being kept for. Absent on older files. */

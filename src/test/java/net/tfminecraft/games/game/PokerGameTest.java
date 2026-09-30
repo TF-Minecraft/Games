@@ -382,6 +382,8 @@ class PokerGameTest extends GameScenarioFixture {
         assertTrue(idle.contains("label.shuffle_shoe"));
         assertFalse(idle.contains("label.turn"));
         table.setShufflePolicy(ShufflePolicy.ROUND);
+        table.setSmallBlind(0);
+        table.setBigBlind(0);
         start(alice, bob);
         assertTrue(game.extraLabel(table).contains("label.shuffle_round"));
         assertTrue(game.extraLabel(table).contains("label.button"));
@@ -484,6 +486,7 @@ class PokerGameTest extends GameScenarioFixture {
         start(alice, bob, carol);
         contribute(bob, 10);
         act("raise");
+        ((PlayerMock) carol).nextMessage(); // The table hears Bob raise.
         assertEquals(carol.getUniqueId(), table.actor());
         act("call");
         assertEquals(carol.getUniqueId(), table.actor(), "a free call must not pass the turn");
@@ -496,7 +499,7 @@ class PokerGameTest extends GameScenarioFixture {
         broke.add(carol.getUniqueId());
         act("call");
         assertEquals(alice.getUniqueId(), table.actor());
-        assertEquals("poker.called", ((PlayerMock) carol).nextMessage());
+        assertTrue(((PlayerMock) carol).nextMessage().startsWith("poker.action_called"));
     }
 
     @Test
@@ -506,7 +509,7 @@ class PokerGameTest extends GameScenarioFixture {
         seat(alice, bob, carol);
         table.startSession();
         game.onSessionStart(table);
-        assertTrue(game.allowStake(table, alice), "seats may stake while holes are dealt");
+        assertFalse(game.allowStake(table, alice), "no stakes while holes are dealt");
         assertFalse(game.allowStake(table, stranger), "a stranger cannot buy into a dealt hand");
         drain();
         assertEquals(bob.getUniqueId(), table.actor());
@@ -523,11 +526,11 @@ class PokerGameTest extends GameScenarioFixture {
         start(alice, bob, carol);
         contribute(bob, 10);
         act("check");
-        assertEquals("poker.raised[poker.raised, n, 10]", ((PlayerMock) bob).nextMessage());
+        assertTrue(((PlayerMock) bob).nextMessage().startsWith("poker.action_raised"));
         assertEquals(carol.getUniqueId(), table.actor());
         contribute(carol, 25);
         act("call");
-        assertEquals("poker.raised[poker.raised, n, 25]", ((PlayerMock) carol).nextMessage());
+        assertTrue(((PlayerMock) carol).nextMessage().startsWith("poker.action_raised"));
         contribute(alice, 25);
         act("call");
         assertEquals(bob.getUniqueId(), table.actor(), "the first bettor has to answer the raise");
@@ -554,7 +557,7 @@ class PokerGameTest extends GameScenarioFixture {
         drain();
         assertEquals(bob.getUniqueId(), table.actor());
         act("check");
-        assertEquals(carol.getUniqueId(), table.actor(), "a new street reopens action for the all-in seat");
+        assertEquals(alice.getUniqueId(), table.actor(), "an all-in seat stays capped on later streets");
     }
 
     @Test

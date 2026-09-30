@@ -132,6 +132,38 @@ public final class ChipItems {
         return out == null ? List.of() : out;
     }
 
+    /** Break real economy coins down to the smallest available whole-denar denomination. */
+    public static List<ItemStack> smallestCoins(ItemStack stack) {
+        if (stack == null || unitDenars(stack) < 1) return List.of();
+        ItemStack one = stack.clone();
+        one.setAmount(1);
+        return smallestCoins(one, 0);
+    }
+
+    private static List<ItemStack> smallestCoins(ItemStack one, int depth) {
+        int original = unitDenars(one);
+        if (original <= 1 || depth >= 16) return List.of(one);
+        List<ItemStack> change = change(one);
+        long value = 0;
+        for (ItemStack coin : change) {
+            int unit = unitDenars(coin);
+            if (unit < 1 || unit >= original || coin.getAmount() < 1) return List.of(one);
+            value += (long) unit * coin.getAmount();
+        }
+        if (value != original) return List.of(one);
+        List<ItemStack> out = new java.util.ArrayList<>();
+        for (ItemStack coin : change) {
+            ItemStack single = coin.clone();
+            single.setAmount(1);
+            for (ItemStack smaller : smallestCoins(single, depth + 1)) {
+                ItemStack made = smaller.clone();
+                made.setAmount(Math.multiplyExact(smaller.getAmount(), coin.getAmount()));
+                out.add(made);
+            }
+        }
+        return out;
+    }
+
     public static String displayModel(ItemStack stack) {
         return pileStyle(stack).model();
     }

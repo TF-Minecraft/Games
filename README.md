@@ -15,6 +15,28 @@ It supports both structured games with managed rounds and a free-play table for 
 - **Guild-owned tables** — connect house games to a guild's funds and let its members take over dealing between rounds.
 - **Help at the table** — in-game books explain each game's rules and available actions.
 
+## Poker tournaments
+
+At an empty poker table, the host or staff can use
+`/games poker configure <buy-in Denars> <starting chips> <max rebuys> <ante chips> <blind minutes>`.
+A buy-in of `0` selects cash play. A blind interval of `0` keeps blinds fixed;
+otherwise they double at each interval and are collected at the next hand.
+Set the starting blinds through the table options menu.
+
+Players use `/games poker buyin` before the first hand. On their turn,
+`/games poker bet <chips>` puts extra chips into the pot, followed by a
+`raise` or `check`. `call` collects the chips needed to match automatically.
+`/games bet allin` (or `allin` / `all in` in chat) stakes the entire remaining stack.
+Cash tables take physical stakes only on the current player's turn.
+
+Busted players can `/games poker rebuy` between hands within the configured limit.
+The host can `/games poker kick <player>` between hands and, when only one positive
+stack remains, `/games poker finish` to pay the Denar prize. Leaving or removal
+after tournament play starts forfeits the entry. Before play starts it is refunded.
+Tournament chips never enter player inventories or Denar payouts. Shutdown or
+reload ends tournaments and returns Denar stakes through the table's refund path;
+settings persist, chip stacks do not.
+
 ## Documentation
 
 [Project documentation](https://github.com/TF-Minecraft/Docs/blob/main/projects/Games/README.md)
@@ -35,7 +57,7 @@ inspect uncovered behaviour. The build workflow uploads the coverage report
 alongside test results. Coverage data is replaced on each test run; use the full
 suite when assessing repository-wide coverage.
 
-The suite covers every production line and branch. Tests should protect
+The suite covers game rounds, money conservation, table interactions, and tournament settings. Tests should protect
 supported behaviour, not create impossible internal states merely to execute a
 branch. Where a branch cannot be reached through any real caller, remove it
 rather than force it.

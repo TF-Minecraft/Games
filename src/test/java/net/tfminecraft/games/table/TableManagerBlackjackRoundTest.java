@@ -46,6 +46,10 @@ import net.tfminecraft.games.game.BlackjackGame;
 import net.tfminecraft.games.game.GamesRegistry;
 import net.tfminecraft.games.layout.TableLayout;
 import net.tfminecraft.games.loader.CardLoader;
+import net.tfminecraft.games.wager.ChipItems;
+import net.tfminecraft.games.wager.CitizenTax;
+import net.tfminecraft.games.wager.WagerItemOverride;
+import org.mockito.MockedStatic;
 
 /** Blackjack rounds across the real game, table, deck and money implementations. */
 class TableManagerBlackjackRoundTest extends TableManagerFixture {
@@ -130,6 +134,43 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         assertEquals(52, java.util.stream.Stream.concat(table.getDeck().remainingIds().stream(),
                 table.getDeck().discardedIds().stream()).distinct().count());
         assertEquals(24, gold(player) + gold(dealer));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {10, 1})
+    void taxedAutoDealerWinBreaksLargeCoinsAndPaysProfitPlusReturnedStake(int firstRank) throws Exception {
+        restoreShoe(fullDeck(), List.of("oseni_" + firstRank, "cerrith_10",
+                firstRank == 1 ? "clubs_10" : "clubs_9", "cerrith_7"));
+        table.setStaffMint(true);
+        table.setMaxBet(1000);
+        rules.onTableReady(table);
+        Cache.wagerItems.add(new WagerItemOverride("GOLD_BLOCK", 100, null, null, null, null,
+                null, null, false, null));
+        ItemStack pouch = new ItemStack(Material.GOLD_BLOCK);
+        try (MockedStatic<ChipItems> currency = mockStatic(ChipItems.class, CALLS_REAL_METHODS);
+                MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
+            // Stand-ins for DenarEconomy's real 100d pouch and 1d change at the external API boundary.
+            currency.when(() -> ChipItems.isMoneyCoin(argThat(item -> item != null
+                    && item.getType() == Material.GOLD_BLOCK))).thenReturn(true);
+            currency.when(() -> ChipItems.change(argThat(item -> item != null
+                    && item.getType() == Material.GOLD_BLOCK)))
+                    .thenReturn(List.of(new ItemStack(Material.GOLD_NUGGET, 100)));
+            int profit = firstRank == 1 ? 150 : 100;
+            tax.when(() -> CitizenTax.levy(player, profit)).thenReturn(new CitizenTax.Levy(10, 10));
+            player.getInventory().setItemInMainHand(pouch);
+            clickFeltAt(player, 0);
+            assertEquals(100, manager.ownedDenars(table, player.getUniqueId()));
+            advanceUntil(() -> BlackjackGame.PLAY.equals(table.phase()) || BlackjackGame.SETTLE.equals(table.phase()));
+            if (BlackjackGame.PLAY.equals(table.phase())) manager.applyPlayCall(player, "stand");
+            advanceUntil(() -> BlackjackGame.SETTLE.equals(table.phase()));
+            assertEquals(profit - 10, gold(player), "profit less 10d tax must be paid in smaller coins");
+            assertEquals(1, player.getInventory().all(Material.GOLD_BLOCK).values().stream()
+                    .mapToInt(ItemStack::getAmount).sum(), "the 100d original stake also comes back");
+            assertTrue(messages(player).contains(firstRank == 1 ? "bet.natural" : "bet.win"));
+            advanceUntil(() -> !table.live());
+            assertTrue(table.ledger().isEmpty());
+            tax.verify(() -> CitizenTax.tell(player, 10));
+        }
     }
 
     @Test

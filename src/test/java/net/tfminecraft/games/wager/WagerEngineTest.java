@@ -65,6 +65,32 @@ class WagerEngineTest {
         return new ItemStack(Material.GOLD_NUGGET, count);
     }
 
+    @Test
+    void largeCoinChangeRemainsAtomicAndHouseTopupsUseSmallDenominations() {
+        table.setStaffMint(true);
+        Cache.wagerItems.add(new WagerItemOverride("GOLD_BLOCK", 100, null, null, null, null,
+                null, null, false, null));
+        ItemStack pouch = new ItemStack(Material.GOLD_BLOCK);
+        try (MockedStatic<ChipItems> currency = mockStatic(ChipItems.class, CALLS_REAL_METHODS)) {
+            currency.when(() -> ChipItems.change(argThat(item -> item != null
+                    && item.getType() == Material.GOLD_BLOCK)))
+                    .thenReturn(List.of(new ItemStack(Material.GOLD_NUGGET, 100)));
+            engine.restore(table, table.getId(), pouch, "pouch", 100, 1, 1, null, null);
+            TxResult refused = engine.begin(table, "refused change")
+                    .move(Accounts.tray(table), Accounts.bank(table), 15).commit();
+            assertFalse(refused.ok());
+            assertEquals(100, engine.tray(table));
+            assertEquals(Material.GOLD_BLOCK, table.ledger().stakes(table.getId()).getFirst().item().getType());
+            assertEquals(1, table.ledger().stakes(table.getId()).getFirst().count());
+            PayWinResult paid = engine.payWin(table, winner, winner.getUniqueId(), 115,
+                    null, false, pouch, null);
+            assertEquals(115, paid.moved(), "100d tray plus a 15d mint topup must both pay exactly");
+            assertEquals(0, paid.owe());
+            assertEquals(115, inventoryCoins(winner));
+            assertEquals(0, engine.tray(table));
+        }
+    }
+
     private void restore(UUID owner, int count, int street) {
         engine.restore(table, owner, coin(1), "gold", 1, count, street, null, null);
     }

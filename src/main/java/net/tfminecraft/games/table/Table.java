@@ -12,6 +12,7 @@ import java.util.UUID;
 import org.bukkit.Location;
 
 import net.tfminecraft.games.deck.Deck;
+import net.tfminecraft.games.game.PokerTournament;
 import net.tfminecraft.games.wager.PotPile;
 import net.tfminecraft.games.wager.RoundMoney;
 import net.tfminecraft.games.wager.TableLedger;
@@ -65,6 +66,8 @@ public final class Table {
     private int houseFloat;
     private int maxBoxes;
     private ShufflePolicy shufflePolicy = ShufflePolicy.SHOE;
+    private final PokerTournament poker = new PokerTournament();
+
     private int smallBlind;
     private int bigBlind;
     private UUID floatOwner;
@@ -423,6 +426,8 @@ public final class Table {
         this.shufflePolicy = shufflePolicy;
     }
 
+    public PokerTournament poker() { return poker; }
+
     public int smallBlind() {
         return smallBlind;
     }
@@ -483,6 +488,6 @@ public final class Table {
         boxIndex = 0;
         handIndex = 0;
         autoCountdown = 0;
-        roundMoney.clear();
+        if (!poker.enabled() || !poker.occupied()) roundMoney.clear();
     }
 }

@@ -51,6 +51,17 @@ final class HandTalk {
         return lines;
     }
 
+    static List<String> allHands(String gameId, List<UUID> seats, Function<UUID, List<Card>> handOf) {
+        List<String> lines = new ArrayList<>();
+        for (UUID id : seats) {
+            List<Card> cards = handOf.apply(id);
+            if (!cards.isEmpty()) {
+                lines.add(Messages.get("hand.shown", "name", RpNames.of(id), "cards", cardList(cards)));
+            }
+        }
+        return lines;
+    }
+
     /** Raw, so the caller's message formats the whole line in one pass. */
     private static String cardList(List<Card> cards) {
         String template = Messages.getRaw("hand.card");

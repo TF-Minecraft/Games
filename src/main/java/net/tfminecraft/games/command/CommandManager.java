@@ -70,6 +70,17 @@ public class CommandManager implements CommandExecutor, TabCompleter {
             }
             return handleHelp(sender, args);
         }
+        if (args[0].equalsIgnoreCase("poker")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage(Messages.get("place.players_only"));
+                return true;
+            }
+            if (!sender.hasPermission("games.bet")) {
+                sender.sendMessage(Messages.get("admin.no_permission"));
+                return true;
+            }
+            return PokerCommands.execute(player, args);
+        }
         if (args[0].equalsIgnoreCase("bet")) {
             if (!sender.hasPermission("games.bet")) {
                 sender.sendMessage(Messages.get("admin.no_permission"));
@@ -328,7 +339,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         String action = args[1].toLowerCase(Locale.ROOT);
         if (action.equals("hit") || action.equals("stand") || action.equals("double")
                 || action.equals("split") || action.equals("check") || action.equals("call")
-                || action.equals("fold") || action.equals("raise")) {
+                || action.equals("fold") || action.equals("raise") || action.equals("allin")) {
             return handleBetPlay(player, table, action);
         }
         if (!player.getUniqueId().equals(table.dealerId())) {
@@ -528,6 +539,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
             }
             if (bet) {
                 first.add("bet");
+                first.add("poker");
             }
             if (admin) {
                 first.addAll(List.of("reload", "deck", "display", "place", "payout", "session", "deal"));
@@ -539,7 +551,10 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("bet") && bet) {
             return prefix(List.of("min", "max", "open", "close", "hit", "stand", "double", "split",
-                    "check", "call", "fold", "raise"), args[1]);
+                    "check", "call", "fold", "raise", "allin"), args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("poker") && bet) {
+            return prefix(List.of("configure", "buyin", "rebuy", "bet", "kick", "finish", "status"), args[1]);
         }
         if (!admin) {
             return Collections.emptyList();
