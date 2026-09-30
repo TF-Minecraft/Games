@@ -86,7 +86,7 @@ class WagerEngineTest {
                     null, false, pouch, null);
             assertEquals(115, paid.moved(), "100d tray plus a 15d mint topup must both pay exactly");
             assertEquals(0, paid.owe());
-            assertEquals(115, inventoryCoins(winner));
+            assertEquals(115, Accounts.pockets(table, winner).available());
             assertEquals(0, engine.tray(table));
         }
     }
