@@ -64,6 +64,14 @@ public final class WagerEngine {
         return table.ledger().total(owner, street);
     }
 
+    /**
+     * True when this player's pockets hold nothing a table would take as a bet, so a call short
+     * of the current bet is an all in rather than a free ride.
+     */
+    public boolean allIn(Table table, Player player) {
+        return Accounts.pockets(table, player).available() < 1;
+    }
+
     public int tray(Table table) {
         return table.ledger().total(table.getId());
     }

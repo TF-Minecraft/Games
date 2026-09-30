@@ -2519,6 +2519,9 @@ public final class TableManager implements Listener, WagerHost {
         if (dealerTray && refuseTrayStock(table, player)) {
             return false;
         }
+        if (!dealerTray && refuseStake(table, player)) {
+            return false;
+        }
         int placeDenars = denars * need;
         ItemStack one = snapshot.clone();
         one.setAmount(1);
@@ -2660,6 +2663,9 @@ public final class TableManager implements Listener, WagerHost {
         if (!dealerTray && refuseBlackjackPlace(player, table, player.getUniqueId(), denars)) {
             return true;
         }
+        if (!dealerTray && refuseStake(table, player)) {
+            return true;
+        }
         UUID bucket = dealerTray ? table.getId() : player.getUniqueId();
         // One coin of exactly this kind, picked out and staked as a single movement. The coin is in
         // the player's hand and worth exactly this much, so the movement always goes through.
@@ -2676,6 +2682,16 @@ public final class TableManager implements Listener, WagerHost {
         }
         lockHand(table, player, false);
         markSelectCooldown(player);
+        return true;
+    }
+
+    /** True when the game will not take this player's money now, such as mid-hand from a stranger. */
+    private static boolean refuseStake(Table table, Player player) {
+        Game game = gameOf(table);
+        if (game == null || game.allowStake(table, player)) {
+            return false;
+        }
+        player.sendMessage(Messages.get("wager.not_in_hand"));
         return true;
     }
 

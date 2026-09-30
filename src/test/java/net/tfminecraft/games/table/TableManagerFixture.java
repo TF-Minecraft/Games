@@ -142,6 +142,7 @@ abstract class TableManagerFixture {
         anchors = track(mockStatic(WorldAnchors.class));
         game = mock(Game.class, withSettings().extraInterfaces(net.tfminecraft.games.game.LiveCardReturns.class));
         when(game.tablePileSlot(any(), anyString(), anyInt(), anyInt(), anyBoolean())).thenCallRealMethod();
+        when(game.allowStake(any(), any())).thenCallRealMethod();
         games = track(mockStatic(GamesRegistry.class));
         games.when(() -> GamesRegistry.of("freeplay")).thenReturn(game);
         messages = track(mockStatic(Messages.class, call -> call.getArgument(0)));

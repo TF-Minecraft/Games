@@ -105,6 +105,7 @@ hand:
 poker:
   need_players: "#ff5555Need two seated players to deal."
   cannot_check: "#ff5555You cannot check. Call, raise, or fold."
+  need_call: "#ff5555Put {n} more on this street to call, or fold."
   need_chips: "#ff5555Put chips on this street first."
   checked: "#aaaaaaChecked."
   called: "#aaaaaaCalled."
@@ -122,6 +123,7 @@ poker:
 draw:
   need_players: "#ff5555Need two seated players to deal."
   cannot_check: "#ff5555You cannot check. Call, raise, or fold."
+  need_call: "#ff5555Put {n} more on this street to call, or fold."
   need_chips: "#ff5555Put chips on this street first."
   checked: "#aaaaaaChecked."
   called: "#aaaaaaCalled."
@@ -148,6 +150,7 @@ wager:
   need_item: "#ff5555Hold the item you want to wager."
   use_click: "#ff5555Place coins and valued chips by right-clicking the table."
   coins_only: "#ff5555This table only takes coins."
+  not_in_hand: "#ff5555You are not in this hand. Wait for the next one."
   need_amount: "#ff5555Enter a whole denar amount of 1 or more."
   no_vote: "#ff5555There is no wager to vote on."
   not_eligible: "#ff5555You cannot vote on this wager."

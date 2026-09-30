@@ -99,6 +99,15 @@ public interface Game {
         onTableReady(table);
     }
 
+    /**
+     * Whether this player may put money on the felt right now. Games that deal a hand to a fixed
+     * set of seats say no to anyone not in the live hand, so a late stake cannot buy into a hand
+     * already dealt and a folded seat cannot feed a pot it has given up.
+     */
+    default boolean allowStake(Table table, Player player) {
+        return true;
+    }
+
     /** Every game reacts to chips arriving or a seat leaving, if only to refresh its label. */
     void onChipIn(Table table, Player player);
 
