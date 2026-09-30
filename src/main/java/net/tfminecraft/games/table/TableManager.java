@@ -4447,8 +4447,12 @@ public final class TableManager implements Listener, WagerHost {
             }
         }
         applyHouseData(table, data);
-        table.poker().configure(data.pokerBuyIn, data.pokerChips > 0 ? data.pokerChips : 1000,
-                data.pokerRebuys, data.pokerAnte, data.pokerBlindMinutes);
+        try {
+            table.poker().configure(data.pokerBuyIn, data.pokerChips > 0 ? data.pokerChips : 1000,
+                    data.pokerRebuys, data.pokerAnte, data.pokerBlindMinutes);
+        } catch (IllegalArgumentException ex) {
+            throw new JsonParseException("Invalid poker settings for table " + data.id, ex);
+        }
         return table;
     }
 

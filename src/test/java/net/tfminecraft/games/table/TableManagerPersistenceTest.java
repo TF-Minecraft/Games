@@ -309,6 +309,24 @@ class TableManagerPersistenceTest extends TableManagerFixture {
     }
 
     @Test
+    void invalidPokerSettingsAreIsolatedAndRetainedWhileValidTablesLoad() throws Exception {
+        UUID invalidId = UUID.randomUUID();
+        JsonObject invalid = document(invalidId);
+        invalid.addProperty("pokerRebuys", -1);
+        write(invalidId + ".json", invalid);
+        UUID valid = UUID.randomUUID();
+        write(valid + ".json", document(valid));
+
+        assertDoesNotThrow(manager::loadAll);
+
+        assertNull(manager.table(invalidId));
+        assertNotNull(manager.table(valid));
+        assertEquals(1, manager.tables().size());
+        assertEquals(-1, read(invalidId).get("pokerRebuys").getAsInt());
+        verify(Games.plugin.getLogger()).warning(contains("Invalid poker settings for table " + invalidId));
+    }
+
+    @Test
     void staleSeatListCanContainMissingOrInvalidIdentitiesWithoutLosingValidTable() throws Exception {
         UUID id = UUID.randomUUID();
         JsonObject saved = document(id);
