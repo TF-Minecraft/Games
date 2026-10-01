@@ -91,6 +91,7 @@ place:
   not_leader: "#ff5555Only the guild leader can place this table."
 
 hand:
+  limit: "#ff5555You have reached this game's hand card limit."
   empty: "#ff5555The shoe is empty."
   need_empty: "#ff5555Empty your hand to draw a card."
   busy: "#ff5555Return your cards at the other table first."

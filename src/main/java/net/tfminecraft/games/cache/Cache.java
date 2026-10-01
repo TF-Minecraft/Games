@@ -82,6 +82,8 @@ public final class Cache {
     public static final List<WagerItemOverride> wagerItems = new ArrayList<>();
     /** Catalog rank -> sort/play value, keyed by game id. Unmapped ranks stay as catalog rank. */
     public static final Map<String, Map<Integer, Integer>> gameRankValues = new HashMap<>();
+    /** Maximum cards held by one player, including cards still being dealt; 0 is unlimited. */
+    public static final Map<String, Integer> gameHandCardLimits = new HashMap<>();
     public static final Map<String, TableLayout> tableLayouts = new HashMap<>();
     /** Help books from help.yml, keyed by what a player types after /games help. */
     public static final Map<String, HelpBook> helpBooks = new LinkedHashMap<>();
