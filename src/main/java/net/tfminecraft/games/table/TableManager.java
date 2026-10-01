@@ -3636,6 +3636,13 @@ public final class TableManager implements Listener, WagerHost {
      * {@code after} runs once the card has landed, or {@code stopped} if it is stopped in the air.
      */
     private boolean drawOneToPlayer(Table table, Player player, int slot, Runnable after, Runnable stopped) {
+        int limit = Cache.gameHandCardLimits.getOrDefault(table.getGameId().toLowerCase(Locale.ROOT), 0);
+        int heldCount = table.getHands().getOrDefault(player.getUniqueId(), List.of()).size();
+        List<Card> pending = dealPendingCards.get(player.getUniqueId());
+        if (limit > 0 && heldCount + (pending == null ? 0 : pending.size()) >= limit) {
+            player.sendMessage(Messages.get("hand.limit"));
+            return false;
+        }
         Table other = tableHolding(player.getUniqueId());
         if (other != null && !other.getId().equals(table.getId())) {
             player.sendMessage(Messages.get("hand.busy"));

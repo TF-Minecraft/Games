@@ -1,5 +1,8 @@
 # Per-game table rules.
+# hand-card-limit caps each player's held and incoming cards (including split groups).
+# Omit it or set it to 0 for no cap. Negative values also disable the cap.
 poker:
+  hand-card-limit: 2
   # Blocks from the placed deck. Leaving this range returns cards and calls Game.onLeave.
   leave-distance: 6
   # Named set from cards.yml. Poker does not deal jokers even if french_54 gains them later.
@@ -27,6 +30,7 @@ poker:
     max-range: 1.2
 
 draw:
+  hand-card-limit: 5
   leave-distance: 6
   card-set: french_52
   label: Five-Draw

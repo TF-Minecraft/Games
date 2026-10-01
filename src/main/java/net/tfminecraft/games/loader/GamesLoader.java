@@ -39,6 +39,7 @@ public final class GamesLoader implements LoaderInterface {
         }
 
         Cache.gameRankValues.clear();
+        Cache.gameHandCardLimits.clear();
         Cache.tableLayouts.clear();
         for (String gameId : config.getKeys(false)) {
             ConfigurationSection section = config.getConfigurationSection(gameId);
@@ -46,6 +47,8 @@ public final class GamesLoader implements LoaderInterface {
                 continue;
             }
             loadRankValues(gameId, section);
+            Cache.gameHandCardLimits.put(gameId.toLowerCase(Locale.ROOT),
+                    Math.max(0, section.getInt("hand-card-limit", 0)));
             Cache.tableLayouts.put(gameId.toLowerCase(Locale.ROOT), readLayout(section));
         }
 

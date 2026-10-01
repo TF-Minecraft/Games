@@ -17,6 +17,12 @@ It supports both structured games with managed rounds and a free-play table for 
 
 ## Poker tournaments
 
+Set `hand-card-limit` under each game in `games.yml` to cap the cards a player
+can hold, including cards still being dealt and Blackjack split groups. The
+bundled limits are 2 for Hold'em and 5 for Five-Draw. Omitted, zero or negative
+limits leave card counts unrestricted; Blackjack and free play omit the limit.
+Existing servers must add the settings to their own `games.yml` to enable them.
+
 At an empty poker table, the host or staff can use
 `/games poker configure <buy-in Denars> <starting chips> <max rebuys> <ante chips> <blind minutes>`.
 A buy-in of `0` selects cash play. A blind interval of `0` keeps blinds fixed;

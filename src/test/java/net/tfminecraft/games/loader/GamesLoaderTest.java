@@ -27,6 +27,7 @@ class GamesLoaderTest {
     private Games previousPlugin;
     private Map<String, Map<Integer, Integer>> previousRanks;
     private Map<String, TableLayout> previousLayouts;
+    private Map<String, Integer> previousLimits;
     private double previousLeave;
     private String previousSet;
     private String previousLabel;
@@ -40,6 +41,7 @@ class GamesLoaderTest {
         previousPlugin = Games.plugin;
         previousRanks = new HashMap<>(Cache.gameRankValues);
         previousLayouts = new HashMap<>(Cache.tableLayouts);
+        previousLimits = new HashMap<>(Cache.gameHandCardLimits);
         previousLeave = Cache.pokerLeaveDistance;
         previousSet = Cache.pokerCardSet;
         previousLabel = Cache.pokerLabel;
@@ -56,6 +58,8 @@ class GamesLoaderTest {
         Cache.gameRankValues.putAll(previousRanks);
         Cache.tableLayouts.clear();
         Cache.tableLayouts.putAll(previousLayouts);
+        Cache.gameHandCardLimits.clear();
+        Cache.gameHandCardLimits.putAll(previousLimits);
         Cache.pokerLeaveDistance = previousLeave;
         Cache.pokerCardSet = previousSet;
         Cache.pokerLabel = previousLabel;
@@ -253,6 +257,14 @@ class GamesLoaderTest {
         assertEquals(16, Cache.sortValue("poker", 1));
         assertEquals("Preserved", Cache.pokerLabel);
         verify(logger, times(2)).severe(startsWith("[Games] Failed to load games.yml: "));
+    }
+
+    @Test
+    void handLimitsArePerGameAndRemovingThemOnReloadRestoresUnlimitedPlay() throws Exception {
+        assertTrue(loader.loadSafe(yaml("Poker: {hand-card-limit: 2}\ndraw: {hand-card-limit: 5}\nfreeplay: {}\nblackjack: {hand-card-limit: -1}\n")));
+        assertEquals(Map.of("poker", 2, "draw", 5, "freeplay", 0, "blackjack", 0), Cache.gameHandCardLimits);
+        assertTrue(loader.loadSafe(yaml("poker: {}\n")));
+        assertEquals(Map.of("poker", 0), Cache.gameHandCardLimits);
     }
 
     private File yaml(String contents) throws Exception {
