@@ -122,7 +122,7 @@ poker:
   configure_refused: "#ff5555Only the table host can set up a tournament, and only while the table is idle and empty."
   kick_refused: "#ff5555Only the host can remove tournament players, and only between hands."
   kicked: "#ff5555The host removed you from the tournament."
-  finish_refused: "#ff5555Only the host can finish a started tournament, between hands, once a single chip stack remains."
+  finish_refused: "#ff5555Only the host can finish a started tournament, between hands, once a single chip stack remains and its winnings have been paid out."
   usage: "#aaaaaa/games poker configure <buyin Denars; 0 = cash> <chips> <rebuys> <ante chips> <blind minutes> | buyin | rebuy | bet <chips> | kick <player> | finish | status"
   need_players: "#ff5555Need two seated players to deal."
   cannot_check: "#ff5555You cannot check. Call, raise, or fold."
