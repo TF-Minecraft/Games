@@ -18,7 +18,7 @@ import net.tfminecraft.games.wager.TxResult;
 import net.tfminecraft.games.wager.WagerEngine;
 import net.tfminecraft.games.voice.RpNames;
 
-/** Dealer settings and player tournament actions at the nearby poker table. */
+/** Host settings and player tournament actions at the nearby poker table. */
 final class PokerCommands {
     private PokerCommands() {}
 
@@ -63,6 +63,14 @@ final class PokerCommands {
                         player.sendMessage(Messages.get("poker.chip_bet_refused"));
                         return true;
                     }
+                }
+                case "start" -> {
+                    if (args.length != 2 || !manager.canEditHouse(player, table)
+                            || !GamesRegistry.of("poker").tryClaimDealer(table, player) || !table.live()) {
+                        player.sendMessage(Messages.get("poker.start_refused"));
+                        return true;
+                    }
+                    player.sendMessage(Messages.get("session.started"));
                 }
                 case "configure" -> {
                     if (!manager.canEditHouse(player, table) || table.live() || table.isPaying()

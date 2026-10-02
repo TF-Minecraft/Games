@@ -54,7 +54,7 @@ public final class PokerGame implements Game {
 
     @Override
     public boolean allowFreeDraw(Table table, Player player) {
-        return !table.live();
+        return !table.live() && !table.poker().enabled();
     }
 
     @Override
@@ -62,10 +62,14 @@ public final class PokerGame implements Game {
         return !table.live();
     }
 
-    /** TableManager only offers the shoe for claiming while the table is idle. */
+    /** The host runs tournaments; cash players may also deal the next hand. */
     @Override
     public boolean tryClaimDealer(Table table, Player player) {
-        if (!table.actives().contains(player.getUniqueId())) {
+        if (table.live() || table.isPaying()) {
+            return false;
+        }
+        boolean host = TableManager.get().canEditHouse(player, table);
+        if (!host && (table.poker().enabled() || !table.actives().contains(player.getUniqueId()))) {
             return false;
         }
         if (table.actives().size() < 2) {

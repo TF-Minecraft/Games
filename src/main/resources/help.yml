@@ -48,7 +48,7 @@ poker:
   author: "The house"
   pages:
     - "#6b3f1d&lTenceur Hold'em\n\n#232323Two cards that are yours alone, five face up in the middle that belong to everybody.\n\nBest five cards win the pot. You can use both of yours, one, or neither."
-    - "#6b3f1d&lSitting down\n\n#232323Right click the felt with coins. That is you in.\n\nOnce two of you are sat down, anyone at the table can right click the shoe and the cards come out."
+    - "#6b3f1d&lSitting down\n\n#232323Cash play: right click the felt with coins to sit.\n\nWith two players ready, a seated player, host or staff clicks the shoe.\n\nIn tournaments, only the host or staff starts."
     - "#6b3f1d&lYour cards\n\n#232323Only you can see them. Left click one to have a proper look at it.\n\nPress your swap hands key to turn them face up for everyone. There is rarely a good reason to."
     - "#6b3f1d&lThe button\n\n#232323Somebody has the button, and it says who above the table.\n\nIt decides who acts first, and it moves one seat along after every hand, so nobody is stuck with it."
     - "#6b3f1d&lThe blinds\n\n#7a2f2fBlinds are collected automatically before dealing. Bring coins that can make the amount exactly.\n\n#232323With two players, the button posts the small blind and acts first before the flop."
@@ -61,10 +61,11 @@ poker:
     - "#6b3f1d&lIf they all fold\n\n#232323Last one still in takes the lot and never has to show anything.\n\nThat is allowed and it is often the point."
     - "#6b3f1d&lTwo pots\n\n#232323If somebody was in for less than the rest, they can only win what they matched.\n\nThe extra goes to the best hand among those who paid it."
     - "#6b3f1d&lWalking off\n\n#232323Step more than a few blocks from the table and you are out of the hand.\n\nOnly unmatched money from this street comes back. Called bets stay in the pot. Tournament players forfeit their chips and buy-in after play starts."
-    - "#6b3f1d&lTournament\n\n#232323The host sets a Denar buy-in, starting chips and rebuys. Use /games poker buyin before play starts. Chips stay at the table; Denars form the prize."
+    - "#6b3f1d&lTournament\n\n#232323Whoever places the deck is the host. They set the buy-in, chips and rebuys. Use /games poker buyin before play starts. Chips stay at the table; Denars form the prize."
     - "#6b3f1d&lChip bets\n\n#232323Use /games poker bet <chips> on your turn, then raise or check. A call takes the required chips automatically. Use /games bet allin for your whole stack."
     - "#6b3f1d&lRebuys and prize\n\n#232323With no chips, use /games poker rebuy between hands, within the host limit. The host uses /games poker finish with one remaining stack to pay the prize."
     - "#6b3f1d&lTournament settings\n\n#232323/games poker configure <buyin> <chips> <rebuys> <ante> <minutes>\n\nSet this on an empty table. Antes use chips. Blinds double at each interval, applied at the next hand. Zero minutes keeps them fixed."
+    - "#6b3f1d&lStarting a tournament\n\n#232323The host uses /games poker start or clicks the shoe when two players are ready.\n\nThey need not buy in. Moving the button does not change the host."
     - "#6b3f1d&lHost controls\n\n#232323/games poker kick <player> removes a player between hands. Leaving or removal after play starts forfeits entry.\n\nOn shutdown the tournament ends and Denar stakes are refunded."
 
 draw:
