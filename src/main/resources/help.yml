@@ -48,7 +48,7 @@ poker:
   author: "The house"
   pages:
     - "#6b3f1d&lTenceur Hold'em\n\n#232323Two cards that are yours alone, five face up in the middle that belong to everybody.\n\nBest five cards win the pot. You can use both of yours, one, or neither."
-    - "#6b3f1d&lSitting down\n\n#232323Right click the felt with coins. That is you in.\n\nOnce two of you are sat down, a seated player or the host can right click the shoe and the cards come out."
+    - "#6b3f1d&lSitting down\n\n#232323Cash play: right click the felt with coins to sit.\n\nWith two players ready, a seated player, host or staff clicks the shoe.\n\nIn tournaments, only the host or staff starts."
     - "#6b3f1d&lYour cards\n\n#232323Only you can see them. Left click one to have a proper look at it.\n\nPress your swap hands key to turn them face up for everyone. There is rarely a good reason to."
     - "#6b3f1d&lThe button\n\n#232323Somebody has the button, and it says who above the table.\n\nIt decides who acts first, and it moves one seat along after every hand, so nobody is stuck with it."
     - "#6b3f1d&lThe blinds\n\n#7a2f2fBlinds are collected automatically before dealing. Bring coins that can make the amount exactly.\n\n#232323With two players, the button posts the small blind and acts first before the flop."
