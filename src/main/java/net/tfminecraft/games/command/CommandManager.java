@@ -554,7 +554,7 @@ public class CommandManager implements CommandExecutor, TabCompleter {
                     "check", "call", "fold", "raise", "allin"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("poker") && bet) {
-            return prefix(List.of("configure", "buyin", "rebuy", "bet", "kick", "finish", "status"), args[1]);
+            return prefix(List.of("configure", "buyin", "rebuy", "bet", "start", "kick", "finish", "status"), args[1]);
         }
         if (!admin) {
             return Collections.emptyList();

@@ -29,6 +29,11 @@ A buy-in of `0` selects cash play. A blind interval of `0` keeps blinds fixed;
 otherwise they double at each interval and are collected at the next hand.
 Set the starting blinds through the table options menu.
 
+The player who places the deck is the table host. The host or staff can use
+`/games poker start` or right-click the shoe to deal the next tournament hand,
+even without buying in. The host stays the same as the poker button rotates.
+At cash tables, seated players can also start a hand by clicking the shoe.
+
 Players use `/games poker buyin` before the first hand. On their turn,
 `/games poker bet <chips>` puts extra chips into the pot, followed by a
 `raise` or `check`. `call` collects the chips needed to match automatically.

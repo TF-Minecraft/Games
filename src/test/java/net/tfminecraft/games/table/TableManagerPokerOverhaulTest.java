@@ -6,11 +6,18 @@ import java.util.ArrayList;
 import java.util.List;
 import org.bukkit.Material;
 import org.bukkit.command.Command;
+import org.bukkit.entity.Entity;
+import org.bukkit.event.player.PlayerInteractAtEntityEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.entity.PlayerMock;
+import net.tfminecraft.games.Games;
 import net.tfminecraft.games.cache.Cache;
 import net.tfminecraft.games.card.Card;
 import net.tfminecraft.games.command.CommandManager;
+import net.tfminecraft.games.display.WorldAnchors;
 import net.tfminecraft.games.game.GamesRegistry;
 import net.tfminecraft.games.game.PokerGame;
 import net.tfminecraft.games.loader.CardLoader;
@@ -30,16 +37,141 @@ class TableManagerPokerOverhaulTest extends TableManagerFixture {
         cards.when(() -> CardLoader.hasSet(set)).thenReturn(true);
         cards.when(() -> CardLoader.getSet(set)).thenReturn(deck);
         games.when(() -> GamesRegistry.of("poker")).thenReturn(new PokerGame());
-        manager.armPlace(player, "poker", false);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.PAPER));
+        manager.armPlace(player, "poker", true);
         assertTrue(manager.tryPlace(player, player.getLocation()));
         return manager.tables().iterator().next();
     }
 
     private void command(org.mockbukkit.mockbukkit.entity.PlayerMock who, String... args) {
-        who.setOp(true);
+        who.addAttachment(Games.plugin, "games.bet", true);
         Command command = mock(Command.class);
         when(command.getName()).thenReturn("games");
         assertTrue(new CommandManager().onCommand(who, command, "games", args));
+    }
+
+    private void buyIn(PlayerMock who) {
+        who.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 10));
+        command(who, "poker", "buyin");
+    }
+
+    private void shoe(Table table, PlayerMock who) {
+        Entity shoe = mock(Entity.class);
+        anchors.when(() -> WorldAnchors.tableId(shoe)).thenReturn(table.getId().toString());
+        var event = new PlayerInteractAtEntityEvent(who, shoe, new Vector(), EquipmentSlot.HAND);
+        manager.onInteractAtEntity(event);
+        assertTrue(event.isCancelled());
+    }
+
+    @Test void deckPlacerCanConfigureAndStartWithoutBeingADealerOrBuyingIn() {
+        Table table = poker();
+        assertEquals(player.getUniqueId(), table.ownerPlayer());
+        assertFalse(player.isOp());
+        assertFalse(player.hasPermission("games.admin"));
+        assertNull(table.dealerId());
+        command(player, "poker", "configure", "10", "100", "1", "2", "5");
+        assertEquals(10, table.poker().buyIn());
+        var first = opponent();
+        var second = opponent();
+        buyIn(first); buyIn(second);
+        assertFalse(table.actives().contains(player.getUniqueId()));
+        command(player, "poker", "start"); tick(30);
+        assertTrue(table.live());
+        assertTrue(table.poker().started());
+        assertEquals(20, table.ledger().total());
+        assertEquals(0, table.poker().stack(player.getUniqueId()));
+    }
+
+    @Test void tournamentSeatsCannotTakeHostControlsEvenWhenTheyHoldTheButton() {
+        Table table = poker();
+        var first = opponent();
+        var second = opponent();
+        command(first, "poker", "configure", "10", "100", "1", "2", "5");
+        assertFalse(table.poker().enabled());
+        command(player, "poker", "configure", "10", "100", "1", "2", "5");
+        buyIn(first); buyIn(second);
+        assertEquals(first.getUniqueId(), table.dealerId());
+        command(first, "poker", "start");
+        shoe(table, first);
+        assertFalse(table.live());
+        command(first, "poker", "kick", second.getName());
+        assertTrue(table.poker().registered(second.getUniqueId()));
+        table.setSmallBlind(5); table.setBigBlind(10);
+        shoe(table, player); tick(30);
+        assertTrue(table.live(), "the unseated deck placer can start from the shoe");
+        manager.applyPlayCall(first, "fold"); tick(30);
+        assertFalse(table.live());
+        assertEquals(second.getUniqueId(), table.dealerId());
+        assertEquals(player.getUniqueId(), table.ownerPlayer());
+        command(player, "poker", "kick", first.getName()); tick(30);
+        command(second, "poker", "finish");
+        assertEquals(20, table.ledger().total(), "the button cannot pay itself the prize");
+        command(player, "poker", "finish"); tick(30);
+        assertEquals(20, Accounts.pockets(table, second).available());
+        assertTrue(table.ledger().isEmpty());
+    }
+
+    @Test void hostStartWaitsForPlayersAndPayoutsAndCannotRestartALiveHand() {
+        Table table = poker();
+        command(player, "poker", "configure", "10", "100", "1", "2", "5");
+        command(player, "poker", "start");
+        assertFalse(table.live());
+        var first = opponent();
+        var second = opponent();
+        buyIn(first);
+        command(player, "poker", "start");
+        assertFalse(table.live());
+        buyIn(second);
+        table.beginPayout(List.of(), null);
+        command(player, "poker", "start");
+        assertFalse(table.live());
+        assertFalse(GamesRegistry.of("poker").tryClaimDealer(table, player));
+        table.endPayout();
+        command(player, "poker", "start"); tick(30);
+        assertTrue(table.live());
+        var actor = table.actor();
+        int stack = table.poker().stack(first.getUniqueId());
+        command(player, "poker", "start");
+        assertTrue(table.live());
+        assertEquals(actor, table.actor());
+        assertEquals(stack, table.poker().stack(first.getUniqueId()));
+    }
+
+    @Test void savedDeckOwnerKeepsTournamentControlsAfterReload() {
+        Table table = poker();
+        var id = table.getId();
+        command(player, "poker", "configure", "10", "100", "1", "2", "5");
+        manager.despawnWorldAll();
+        manager.loadAll();
+        Table loaded = manager.table(id);
+        assertNotSame(table, loaded);
+        assertEquals(player.getUniqueId(), loaded.ownerPlayer());
+        assertEquals(10, loaded.poker().buyIn());
+        command(player, "poker", "configure", "20", "200", "2", "4", "10");
+        assertEquals(20, loaded.poker().buyIn());
+        assertNull(loaded.dealerId());
+    }
+
+    @Test void staffCanStartAnotherPlayersTournamentWithoutASeat() {
+        Table table = poker();
+        command(player, "poker", "configure", "10", "100", "1", "2", "5");
+        buyIn(opponent()); buyIn(opponent());
+        var staff = opponent();
+        staff.addAttachment(Games.plugin, TableHouse.STAFF_PERM, true);
+        command(staff, "poker", "start"); tick(30);
+        assertTrue(table.live());
+        assertEquals(player.getUniqueId(), table.ownerPlayer());
+        assertFalse(table.actives().contains(staff.getUniqueId()));
+    }
+
+    @Test void cashSeatsCanStillStartFromTheShoeWithoutOwningTheDeck() {
+        Table table = poker();
+        var first = opponent();
+        var second = opponent();
+        stakeCoin(first, table); stakeCoin(second, table);
+        shoe(table, first); tick(30);
+        assertTrue(table.live());
+        assertEquals(player.getUniqueId(), table.ownerPlayer());
     }
 
     @Test void automaticHeadsUpBlindsAndAllInsRunOutTheBoardWithoutMoreTurns() {
