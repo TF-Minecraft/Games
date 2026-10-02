@@ -94,6 +94,7 @@ class TableManagerPokerOverhaulTest extends TableManagerFixture {
         command(first, "poker", "start");
         shoe(table, first);
         assertFalse(table.live());
+        assertTrue(table.heldBy(first.getUniqueId()).isEmpty(), "a refused start must not draw a sandbox card");
         command(first, "poker", "kick", second.getName());
         assertTrue(table.poker().registered(second.getUniqueId()));
         table.setSmallBlind(5); table.setBigBlind(10);
@@ -116,6 +117,8 @@ class TableManagerPokerOverhaulTest extends TableManagerFixture {
         command(player, "poker", "configure", "10", "100", "1", "2", "5");
         command(player, "poker", "start");
         assertFalse(table.live());
+        shoe(table, player); tick(30);
+        assertTrue(table.heldBy(player.getUniqueId()).isEmpty());
         var first = opponent();
         var second = opponent();
         buyIn(first);

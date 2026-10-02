@@ -54,7 +54,7 @@ public final class PokerGame implements Game {
 
     @Override
     public boolean allowFreeDraw(Table table, Player player) {
-        return !table.live();
+        return !table.live() && !table.poker().enabled();
     }
 
     @Override
