@@ -34,6 +34,7 @@ blackjack:
     - "#6b3f1d&lTalking to the table\n\n#232323Those words only count when it is actually your turn, so you can chat the rest of the time without betting the house by accident.\n\n/games bet hit does the same thing."
     - "#6b3f1d&lDouble\n\n#232323Happy with two cards and want more on it? Say double. You match your bet, take exactly one more card, and that is your hand done.\n\nYou need the coins on you."
     - "#6b3f1d&lSplit\n\n#232323Two cards of the same rank can be pulled apart into two hands, and you match your bet for the new one.\n\nKeep going and you can have four hands running at once."
+    - "#6b3f1d&lSplitting aces\n\n#232323Aces are the exception. Each one gets a single card and that hand is done, whatever it comes to.\n\nAn ace and a ten after a split is 21, but it is not blackjack and pays even money."
     - "#6b3f1d&lThe dealer's turn\n\n#232323Once everybody is done the dealer turns over the hidden card and keeps drawing until reaching 17, then stops there.\n\nNothing you can do at this point but watch."
     - "#6b3f1d&lGetting paid\n\n#232323Beat the dealer and your bet comes back doubled.\n\n21 on your first two cards pays 3 to 2.\n\nDraw with the dealer and your money comes back."
     - "#6b3f1d&lNo insurance\n\n#232323This house does not offer insurance and it does not offer surrender. If the dealer shows an ace, that is simply your problem.\n\nCoins land back on the felt when you win."
