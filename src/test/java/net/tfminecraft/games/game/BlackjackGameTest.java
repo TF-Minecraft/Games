@@ -651,6 +651,30 @@ class BlackjackGameTest {
     }
 
     @Test
+    void openAutomaticWindowWithALegalBetStartsItsClockWithoutAnotherChip() {
+        table.setDealerId(null);
+        table.setAutoDealer(true);
+        game.onTableReady(table);
+        assertEquals(2, table.autoCountdown());
+        server.getScheduler().performTicks(20);
+        assertEquals(1, table.autoCountdown());
+    }
+
+    @Test
+    void lostBetClockRestartsWhileALegalBetIsStillOpen() {
+        table.setDealerId(null);
+        table.setAutoDealer(true);
+        table.setBetOpen(true);
+        assertEquals(0, table.autoCountdown());
+        game.onClock(table);
+        assertEquals(2, table.autoCountdown());
+        server.getScheduler().performTicks(20);
+        assertEquals(1, table.autoCountdown());
+        game.onClock(table);
+        assertEquals(1, table.autoCountdown(), "a running window must not start over");
+    }
+
+    @Test
     void automaticBetTimerStartsOnlyOnceAndClosesBeforeAutomaticDeal() {
         table.setDealerId(null);
         table.setAutoDealer(true);
@@ -886,6 +910,7 @@ class BlackjackGameTest {
         table.setDealerId(null);
         table.setAutoDealer(true);
         fundingAccepted = false;
+        bets.clear();
         game.onTableReady(table);
         bets.put(player.getUniqueId(), 27);
         game.onChipIn(table, player, 7, new ItemStack(Material.GOLD_NUGGET));

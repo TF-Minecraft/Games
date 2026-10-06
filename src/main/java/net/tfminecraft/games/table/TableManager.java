@@ -193,6 +193,12 @@ public final class TableManager implements Listener, WagerHost {
         handTicks++;
         for (Table table : tables.values()) {
             tickAway(table);
+            if (handTicks % 20 == 0) {
+                Game clock = gameOf(table);
+                if (clock != null) {
+                    clock.onClock(table);
+                }
+            }
             Map<UUID, List<HandCard>> hands = table.getHands();
             if (hands.isEmpty()) {
                 continue;

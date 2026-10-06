@@ -289,6 +289,7 @@ public final class BlackjackGame implements Game {
 
     @Override
     public void onSessionStart(Table table) {
+        cancelBetTimer(table);
         if (table.shufflePolicy() == ShufflePolicy.ROUND) {
             TableManager.get().reshuffleFull(table);
         }
@@ -364,6 +365,23 @@ public final class BlackjackGame implements Game {
             return;
         }
         startBetTimer(table);
+    }
+
+    /**
+     * An auto table with a legal bet and no running clock never deals. A dealer claim, a leave,
+     * or a restart can cancel the countdown and leave the chips sitting there.
+     */
+    static boolean needsBetClock(boolean live, boolean auto, boolean betOpen, boolean frozen,
+            boolean clockRunning, boolean legalBet) {
+        return !live && auto && betOpen && !frozen && !clockRunning && legalBet;
+    }
+
+    @Override
+    public void onClock(Table table) {
+        if (needsBetClock(table.live(), auto(table), table.betOpen(), GuildTables.frozen(table),
+                betTimers.containsKey(table.getId()), TableManager.get().hasLegalBlackjackBox(table))) {
+            startBetTimer(table);
+        }
     }
 
     @Override
@@ -667,9 +685,15 @@ public final class BlackjackGame implements Game {
             return;
         }
         table.setBetOpen(true);
-        table.setAutoCountdown(0);
+        if (!betTimers.containsKey(table.getId())) {
+            table.setAutoCountdown(0);
+        }
         TableManager.get().refreshLabel(table);
         syncTrayHolo(table);
+        if (needsBetClock(false, true, true, false, betTimers.containsKey(table.getId()),
+                TableManager.get().hasLegalBlackjackBox(table))) {
+            startBetTimer(table);
+        }
     }
 
     /**
