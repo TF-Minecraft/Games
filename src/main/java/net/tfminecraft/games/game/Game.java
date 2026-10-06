@@ -100,6 +100,11 @@ public interface Game {
     }
 
     /**
+     * Once a second. Blackjack restarts a bet window whose clock was lost.
+     */
+    default void onClock(Table table) {}
+
+    /**
      * Whether this player may put money on the felt right now. Games that deal a hand to a fixed
      * set of seats say no to anyone not in the live hand, so a late stake cannot buy into a hand
      * already dealt and a folded seat cannot feed a pot it has given up.

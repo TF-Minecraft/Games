@@ -14,6 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -26,6 +27,8 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import org.mockbukkit.mockbukkit.world.WorldMock;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
+import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
+import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
 import net.tfminecraft.games.cache.Cache;
@@ -212,10 +215,52 @@ class DisplayManagerTest {
         ChunkLoadEvent event = new ChunkLoadEvent(world.getChunkAt(0, 0), false);
         clearInvocations(packets);
         manager.onChunkLoad(event);
-        verify(packets).update(eq(owner), anyInt(), eq(back), any(), eq(0), eq(0));
-        verify(packets).update(eq(observer), anyInt(), eq(back), any(), eq(0), eq(0));
+        verify(packets).destroy(eq(owner), anyList());
+        verify(packets).spawn(eq(owner), anyInt(), any(), eq(origin), eq(back), any());
+        verify(packets).destroy(eq(observer), anyList());
+        verify(packets).spawn(eq(observer), anyInt(), any(), eq(origin), eq(back), any());
         verify(packets).spawn(eq(distant), anyInt(), any(), eq(origin), eq(back), any());
-        verify(packets, times(1)).spawn(any(), anyInt(), any(), any(), any(), any());
+        verify(packets, never()).update(any(), anyInt(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void returningToAChunkRespawnsCardsTheClientDropped() {
+        manager.spawn(token, origin, back, null);
+        clearInvocations(packets);
+        manager.onPlayerChunkLoad(new PlayerChunkLoadEvent(world.getChunkAt(0, 0), owner));
+        verify(packets).destroy(eq(owner), anyList());
+        verify(packets).spawn(eq(owner), anyInt(), any(), eq(origin), eq(back), any());
+        verify(packets, never()).update(eq(owner), anyInt(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void leavingAChunkForgetsTheViewerUntilTheyLoadItAgain() {
+        manager.spawn(token, origin, back, null);
+        clearInvocations(packets);
+        manager.onPlayerChunkUnload(new PlayerChunkUnloadEvent(world.getChunkAt(0, 0), owner));
+        verify(packets).destroy(eq(owner), anyList());
+        clearInvocations(packets);
+        manager.onPlayerChunkLoad(new PlayerChunkLoadEvent(world.getChunkAt(0, 0), owner));
+        verify(packets, never()).destroy(eq(owner), anyList());
+        verify(packets).spawn(eq(owner), anyInt(), any(), eq(origin), eq(back), any());
+    }
+
+    @Test
+    void walkingBackIntoRangeSpawnsACardThatWasNeverTracked() {
+        manager.spawn(token, origin, back, null);
+        distant.teleport(origin);
+        clearInvocations(packets);
+        manager.onMove(new PlayerMoveEvent(distant, origin.clone().add(11, 0, 0), origin));
+        verify(packets).spawn(eq(distant), anyInt(), any(), eq(origin), eq(back), any());
+    }
+
+    @Test
+    void walkingOutOfRangeLeavesTheClientEntityAlone() {
+        manager.spawn(token, origin, back, null);
+        clearInvocations(packets);
+        Location far = origin.clone().add(11, 0, 0);
+        manager.onMove(new PlayerMoveEvent(owner, origin, far));
+        verify(packets, never()).destroy(eq(owner), anyList());
     }
 
     @Test

@@ -18,10 +18,15 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+
+import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
+import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
@@ -227,10 +232,11 @@ public final class DisplayManager implements Listener {
                 continue;
             }
             for (Player viewer : nearby(origin)) {
-                if (!token.viewers.contains(viewer.getUniqueId())) {
-                    show(viewer, token);
+                // The server just loaded this chunk, so clients no longer have the packet entity.
+                if (token.viewers.contains(viewer.getUniqueId())) {
+                    reshow(viewer, token);
                 } else {
-                    sendUpdate(viewer, token, 0, 0);
+                    show(viewer, token);
                 }
             }
         }
@@ -256,16 +262,111 @@ public final class DisplayManager implements Listener {
         event.getPlayer().sendMessage(Messages.get("display.clicked", "token", tokenId));
     }
 
+    /**
+     * The client drops packet entities when it unloads their chunk. A metadata update does not
+     * bring them back, so coming into the chunk has to spawn them again.
+     */
+    @EventHandler
+    public void onPlayerChunkLoad(PlayerChunkLoadEvent event) {
+        syncChunk(event.getPlayer(), event.getWorld(), event.getChunk().getX(), event.getChunk().getZ(), true);
+    }
+
+    @EventHandler
+    public void onPlayerChunkUnload(PlayerChunkUnloadEvent event) {
+        syncChunk(event.getPlayer(), event.getWorld(), event.getChunk().getX(), event.getChunk().getZ(), false);
+    }
+
+    @EventHandler
+    public void onMove(PlayerMoveEvent event) {
+        Location to = event.getTo();
+        if (to == null) {
+            return;
+        }
+        Location from = event.getFrom();
+        if (from.getBlockX() == to.getBlockX() && from.getBlockY() == to.getBlockY()
+                && from.getBlockZ() == to.getBlockZ()) {
+            return;
+        }
+        refreshViewer(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onRespawn(PlayerRespawnEvent event) {
+        Bukkit.getScheduler().runTask(Games.plugin, () -> showNearby(event.getPlayer()));
+    }
+
     private void showNearby(Player viewer) {
-        if (!viewer.isOnline() || !ProtocolLibBridge.isReady()) {
+        refreshViewer(viewer);
+    }
+
+    private void refreshViewer(Player viewer) {
+        if (viewer == null || !viewer.isOnline() || !ProtocolLibBridge.isReady()) {
             return;
         }
         Location loc = viewer.getLocation();
         for (Token token : tokens.values()) {
-            if (inRange(loc, token.origin) && !token.viewers.contains(viewer.getUniqueId())) {
+            // Do not destroy on the way out of display range. The client keeps the entity until
+            // the chunk unloads, and destroying it would blank the table for anyone still in view.
+            if (respawnFor(inRange(loc, token.origin), token.viewers.contains(viewer.getUniqueId()), false)) {
                 show(viewer, token);
             }
         }
+    }
+
+    private void syncChunk(Player viewer, World world, int chunkX, int chunkZ, boolean loaded) {
+        if (viewer == null || !viewer.isOnline() || world == null || !ProtocolLibBridge.isReady()) {
+            return;
+        }
+        for (Token token : tokens.values()) {
+            if (!inChunk(token, world, chunkX, chunkZ)) {
+                continue;
+            }
+            boolean tracking = token.viewers.contains(viewer.getUniqueId());
+            boolean near = inRange(viewer.getLocation(), token.origin);
+            if (!loaded || hideFor(near, tracking)) {
+                hide(viewer, token);
+                continue;
+            }
+            if (respawnFor(near, tracking, true)) {
+                reshow(viewer, token);
+            }
+        }
+    }
+
+    /** True when this viewer needs a fresh spawn packet, not a metadata tweak. */
+    static boolean respawnFor(boolean inRange, boolean tracking, boolean chunkReloaded) {
+        return inRange && (!tracking || chunkReloaded);
+    }
+
+    /** True when a tracked viewer is too far to be shown the chunk again. */
+    static boolean hideFor(boolean inRange, boolean tracking) {
+        return tracking && !inRange;
+    }
+
+    private static boolean inChunk(Token token, World world, int chunkX, int chunkZ) {
+        Location origin = token.origin;
+        if (origin == null || origin.getWorld() == null || !origin.getWorld().equals(world)) {
+            return false;
+        }
+        return (origin.getBlockX() >> 4) == chunkX && (origin.getBlockZ() >> 4) == chunkZ;
+    }
+
+    private void reshow(Player viewer, Token token) {
+        if (!ProtocolLibBridge.isReady()) {
+            return;
+        }
+        hide(viewer, token);
+        show(viewer, token);
+    }
+
+    private void hide(Player viewer, Token token) {
+        if (viewer == null || token == null || !token.viewers.remove(viewer.getUniqueId())) {
+            return;
+        }
+        if (!ProtocolLibBridge.isReady()) {
+            return;
+        }
+        ProtocolLibBridge.getPackets().destroy(viewer, List.of(token.entityId));
     }
 
     private void hideAll(Player viewer) {
