@@ -31,6 +31,7 @@ After installing the pinned plugin dependencies used by the build workflow, run
 registries, worlds, players and inventories, and Mockito for external plugin and
 packet boundaries.
 
+Surefire writes test results to `target/surefire-reports/`.
 JaCoCo writes HTML, XML and CSV reports to `target/site/jacoco/`, and CI uploads
 them as a `coverage-reports-*` artifact. No coverage threshold is enforced.
 Packet encoding and client rendering still need a run on a real server.
