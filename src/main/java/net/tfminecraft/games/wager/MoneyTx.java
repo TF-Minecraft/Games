@@ -189,13 +189,6 @@ public final class MoneyTx {
                 MoneyAccount prior = sources.putIfAbsent(sourceKey, leg.from);
                 if (prior != null && prior != leg.from) return TxResult.failed(TxResult.Reason.NO_CHANGE, leg.denars, 0);
             }
-            if (leg.to instanceof PlayerAccount recipient && recipient.flightTarget() != null) {
-                CharacterRef expected = table.wagerCharacters().get(recipient.flightTarget());
-                if (expected == null || (recipient.online() && !expected.equals(recipient.character()))) {
-                    WagerJournal.quarantine(table, "Payout character changed: owner=" + recipient.flightTarget() + ", expected=" + expected);
-                    return TxResult.failed(TxResult.Reason.PLAYER_SHORT, leg.denars, 0);
-                }
-            }
             if (leg.from instanceof PlayerAccount player) {
                 var character = player.character();
                 var captured = table.wagerCharacters().get(player.flightTarget());
@@ -219,6 +212,15 @@ public final class MoneyTx {
             }
             if (!leg.to.canAccept(plan.denars())) {
                 return TxResult.failed(TxResult.Reason.BANK_SHORT, want, 0);
+            }
+            // Only a leg that will actually pay someone needs its captured character checked;
+            // an empty tray or bucket plans nothing and must not freeze the table.
+            if (leg.to instanceof PlayerAccount recipient && recipient.flightTarget() != null) {
+                CharacterRef expected = table.wagerCharacters().get(recipient.flightTarget());
+                if (expected == null || (recipient.online() && !expected.equals(recipient.character()))) {
+                    WagerJournal.quarantine(table, "Payout character changed: owner=" + recipient.flightTarget() + ", expected=" + expected);
+                    return TxResult.failed(TxResult.Reason.PLAYER_SHORT, plan.denars(), 0);
+                }
             }
             if (leg.pool != null) {
                 leg.pool[0] -= plan.denars();

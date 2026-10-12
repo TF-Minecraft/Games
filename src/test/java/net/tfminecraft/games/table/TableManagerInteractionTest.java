@@ -211,6 +211,7 @@ class TableManagerInteractionTest extends TableManagerFixture {
         assertNull(table.dealerId());
         verify(game).onDealerGone(table);
         assertSame(table, manager.table(table.getId()));
+        assertFalse(table.moneyBlocked(), "returning an empty tray must not freeze the table");
     }
 
     private Block surface(int x, int y, int z, double width, double height, double depth) {

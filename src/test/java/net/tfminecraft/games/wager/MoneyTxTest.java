@@ -107,6 +107,52 @@ class MoneyTxTest {
         }
     }
 
+    private PlayerAccount payee(UUID owner, net.tfminecraft.tlibs.character.CharacterRef character) {
+        PlayerAccount payee = mock(PlayerAccount.class);
+        when(payee.flightTarget()).thenReturn(owner);
+        when(payee.online()).thenReturn(true);
+        when(payee.character()).thenReturn(character);
+        when(payee.canAccept(anyInt())).thenReturn(true);
+        when(payee.accept(anyList())).thenAnswer(call -> TableLedger.valueOf(call.getArgument(0)));
+        return payee;
+    }
+
+    @Test
+    void emptyLegsToUncapturedPayeeMoveNothingAndDoNotQuarantine() {
+        UUID owner = UUID.randomUUID();
+        PlayerAccount payee = payee(owner,
+                new net.tfminecraft.tlibs.character.CharacterRef(owner, UUID.randomUUID()));
+        // No plan stubbed: the tray/bucket is empty, so both legs plan nothing.
+        assertEquals(TxResult.Reason.NOTHING, tx().moveAll(source, payee).commit().reason());
+        assertEquals(TxResult.Reason.NOTHING, tx().moveUpTo(source, payee, 10).commit().reason());
+        assertFalse(table.moneyBlocked(), "a leg that moves no money must not freeze the table");
+    }
+
+    @Test
+    void fundedLegToUncapturedOrChangedPayeeStillQuarantines() {
+        UUID owner = UUID.randomUUID();
+        var captured = new net.tfminecraft.tlibs.character.CharacterRef(owner, UUID.randomUUID());
+        var other = new net.tfminecraft.tlibs.character.CharacterRef(owner, UUID.randomUUID());
+        PlayerAccount payee = payee(owner, other);
+        plan(source, 5);
+        TxResult uncaptured = tx().move(source, payee, 5).commit();
+        assertFalse(uncaptured.ok());
+        assertEquals(TxResult.Reason.PLAYER_SHORT, uncaptured.reason());
+        assertEquals(5, uncaptured.wanted());
+        assertTrue(table.moneyBlocked(), "paying an uncaptured character freezes for staff");
+
+        Table changed = new Table(UUID.randomUUID(), "test", null, 0, null);
+        changed.wagerCharacters().put(owner, captured);
+        TxResult swapped = new MoneyTx(host, changed, "test").move(source, payee, 5).commit();
+        assertFalse(swapped.ok());
+        assertTrue(changed.moneyBlocked(), "paying a different character than captured freezes for staff");
+
+        Table matching = new Table(UUID.randomUUID(), "test", null, 0, null);
+        matching.wagerCharacters().put(owner, other);
+        assertEquals(5, new MoneyTx(host, matching, "test").move(source, payee, 5).commit().moved());
+        assertFalse(matching.moneyBlocked());
+    }
+
     @Test
     void destinationRefusalDoesNotWithdraw() {
         Withdrawal plan = plan(source, 10);
