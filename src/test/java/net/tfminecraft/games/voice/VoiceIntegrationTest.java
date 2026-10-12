@@ -101,11 +101,16 @@ class VoiceIntegrationTest {
     }
 
     @Test
-    void blankOrNullSharedDisplayUsesAccountName() {
+    void blankOrNullSharedDisplayUsesAccountNameWithoutLoggingAFailure() {
         when(identity.displayName(player)).thenReturn(" ");
         assertEquals("AccountName", RpNames.of(id));
         when(identity.displayName(player)).thenReturn(null);
         assertEquals("AccountName", RpNames.of(id));
+        try (var names = mockStatic(net.tfminecraft.tlibs.character.Characters.class)) {
+            names.when(() -> net.tfminecraft.tlibs.character.Characters.displayName(player)).thenReturn(null);
+            assertEquals("AccountName", RpNames.of(id));
+        }
+        verifyNoInteractions(logger);
     }
 
     @Test
