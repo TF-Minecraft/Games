@@ -3,8 +3,8 @@ api-version: '1.21.10'
 name: Games
 version: ${project.version}
 author: Drefvelin
-depend: [TLibs, ItemsAdder, ProtocolLib]
-softdepend: [DenarEconomy, RPCharacters, SimpleFactions]
+depend: [TLibs, ItemsAdder, ProtocolLib, DenarEconomy]
+softdepend: [RPCharacters, SimpleFactions]
 
 commands:
   games:

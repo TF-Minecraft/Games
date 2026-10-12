@@ -15,6 +15,12 @@ import org.bukkit.inventory.ItemStack;
  */
 public interface MoneyAccount {
 
+    /** A detached source used to reserve coins while a compound transaction is planned. */
+    default MoneyAccount planningCopy() { return this; }
+
+    /** Ledger destination/source, or null for physical chips. */
+    default String ledgerAccount() { return null; }
+
     /** Short name for the audit line, like "felt" or "guild bank". */
     String label();
 

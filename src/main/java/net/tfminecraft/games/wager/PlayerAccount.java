@@ -22,6 +22,7 @@ public final class PlayerAccount implements MoneyAccount {
     private final int streetId;
     /** Set when the items are worth what they were wagered for rather than a coin value. */
     private final int declaredUnit;
+    private List<Group> planningGroups;
 
     PlayerAccount(Player player, UUID id, Predicate<ItemStack> allowed, Location dropAt, int streetId) {
         this(player, id, allowed, dropAt, streetId, 0);
@@ -35,6 +36,29 @@ public final class PlayerAccount implements MoneyAccount {
         this.dropAt = dropAt;
         this.streetId = streetId;
         this.declaredUnit = declaredUnit;
+    }
+
+    net.tfminecraft.tlibs.character.CharacterRef character() {
+        return player == null ? null : net.tfminecraft.tlibs.character.Characters.currentSession(player)
+                .map(session -> session.ref()).orElse(null);
+    }
+
+    boolean online() { return player != null && player.isOnline(); }
+
+    Object snapshot() {
+        java.util.List<Object> state = new java.util.ArrayList<>();
+        state.add(character());
+        state.add(player != null && player.isOnline());
+        if (player != null) for (ItemStack item : player.getInventory().getContents())
+            state.add(item == null ? null : item.clone());
+        return state;
+    }
+
+    @Override
+    public MoneyAccount planningCopy() {
+        PlayerAccount copy = new PlayerAccount(player, id, allowed, dropAt, streetId, declaredUnit);
+        copy.planningGroups = groups();
+        return copy;
     }
 
     @Override
@@ -209,6 +233,13 @@ public final class PlayerAccount implements MoneyAccount {
     /** Coins of the same kind and value, wherever they sit, counted as one pool. */
     private List<Group> groups() {
         List<Group> out = new ArrayList<>();
+        if (planningGroups != null) {
+            for (Group group : planningGroups) {
+                if (group.count > 0) out.add(new Group(group.unit, group.one.clone(), group.count));
+            }
+            out.sort((a, b) -> Integer.compare(b.unit, a.unit));
+            return out;
+        }
         if (player == null || !player.isOnline()) {
             return out;
         }
@@ -314,7 +345,8 @@ public final class PlayerAccount implements MoneyAccount {
                 return false;
             }
             for (ItemStack made : change.into()) {
-                give(made.clone());
+                if (planningGroups == null) give(made.clone());
+                else merge(planningGroups, made, ChipItems.unitDenars(made));
             }
             return true;
         }
@@ -322,6 +354,15 @@ public final class PlayerAccount implements MoneyAccount {
         /** Pulls the counted items back out of wherever they are sitting now. */
         private int strip(Group group, int want) {
             int left = want;
+            if (planningGroups != null) {
+                for (Group source : planningGroups) {
+                    if (source.unit != group.unit || !source.one.isSimilar(group.one)) continue;
+                    int take = Math.min(source.count, left);
+                    source.count -= take;
+                    left -= take;
+                }
+                return want - left;
+            }
             ItemStack[] contents = player.getInventory().getContents();
             for (int slot = 0; slot < contents.length && left > 0; slot++) {
                 ItemStack stack = contents[slot];

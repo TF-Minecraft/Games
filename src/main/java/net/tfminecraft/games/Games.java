@@ -37,6 +37,7 @@ public class Games extends JavaPlugin {
     @Override
     public void onEnable() {
         plugin = this;
+        net.tfminecraft.games.wager.WagerJournal.initialize();
         createFolders();
         createConfigs();
         if (!loadConfigs()) {
@@ -49,6 +50,7 @@ public class Games extends JavaPlugin {
         getServer().getPluginManager().registerEvents(GameSelectGui.INSTANCE, this);
         getServer().getPluginManager().registerEvents(TableOptionsGui.INSTANCE, this);
         TableManager.get().loadAll();
+        getServer().getScheduler().runTaskTimer(this, () -> TableManager.get().loadDeferred(), 100L, 100L);
         TableManager.get().startClock();
 
         var gameCmd = getCommand("games");

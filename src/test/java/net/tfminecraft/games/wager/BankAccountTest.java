@@ -30,7 +30,7 @@ class BankAccountTest {
         chips = mockStatic(ChipItems.class);
         chips.when(() -> ChipItems.unitDenars(template)).thenReturn(5);
         chips.when(() -> ChipItems.typeKey(any(ItemStack.class))).thenReturn("coin:gold");
-        bank.when(() -> GuildBank.balance("guild")).thenReturn(103);
+        bank.when(() -> GuildBank.balance(table)).thenReturn(103);
     }
 
     @AfterEach
@@ -55,7 +55,7 @@ class BankAccountTest {
         assertNull(account.planTake(105, template));
         chips.when(() -> ChipItems.unitDenars(template)).thenReturn(0);
         assertNull(account.planTake(5, template));
-        bank.verify(() -> GuildBank.withdraw(anyString(), anyInt()), never());
+        bank.verify(() -> GuildBank.declareProfit(any(), anyString(), anyInt()), never());
     }
 
     @Test
@@ -77,14 +77,14 @@ class BankAccountTest {
         List<Stake> preview = withdrawal.preview();
         assertCoins(preview);
         assertEquals(12, table.houseFloat());
-        bank.verify(() -> GuildBank.withdraw(anyString(), anyInt()), never());
-        bank.when(() -> GuildBank.withdraw("guild", 20)).thenReturn(true);
+        bank.verify(() -> GuildBank.declareProfit(any(), anyString(), anyInt()), never());
+        account.authorizeDebit(20);
         List<Stake> taken = withdrawal.take();
         assertCoins(taken);
         assertNotSame(preview.getFirst(), taken.getFirst());
         assertEquals(32, table.houseFloat());
         assertEquals(16, template.getAmount());
-        bank.verify(() -> GuildBank.withdraw("guild", 20));
+        assertTrue(withdrawal.take().isEmpty(), "posting authorization cannot be reused");
     }
 
     @Test
@@ -101,7 +101,7 @@ class BankAccountTest {
         assertTrue(account.canAccept(-1));
         bank.verifyNoInteractions();
         assertFalse(account.canAccept(1));
-        bank.when(() -> GuildBank.canHold("guild")).thenReturn(true);
+        bank.when(() -> GuildBank.canHold(table)).thenReturn(true);
         assertTrue(account.canAccept(1));
     }
 
@@ -112,25 +112,26 @@ class BankAccountTest {
         bank.verifyNoInteractions();
         assertEquals(0, account.accept(coins(20)));
         assertEquals(12, table.houseFloat());
-        bank.verify(() -> GuildBank.declareProfit(anyString(), anyInt()), never());
+        bank.verify(() -> GuildBank.declareProfit(any(), anyString(), anyInt()), never());
     }
 
     @Test
     void depositedWinningsRepayFloatBeforeDeclaringProfit() {
         table.setHouseFloat(12);
-        bank.when(() -> GuildBank.deposit("guild", 20)).thenReturn(true);
+        account.authorizeCredit(20);
         assertEquals(20, account.accept(coins(20)));
         assertEquals(0, table.houseFloat());
-        bank.verify(() -> GuildBank.declareProfit("guild", 8));
+        bank.verify(() -> GuildBank.declareProfit(any(), anyString(), anyInt()), never());
+        assertEquals(0, account.accept(coins(20)), "posting authorization cannot be reused");
     }
 
     @Test
     void partialFloatRepaymentDeclaresNoProfit() {
         table.setHouseFloat(30);
-        bank.when(() -> GuildBank.deposit("guild", 20)).thenReturn(true);
+        account.authorizeCredit(20);
         assertEquals(20, account.accept(coins(20)));
         assertEquals(10, table.houseFloat());
-        bank.verify(() -> GuildBank.declareProfit(anyString(), anyInt()), never());
+        bank.verify(() -> GuildBank.declareProfit(any(), anyString(), anyInt()), never());
     }
 
     private void assertCoins(List<Stake> coins) {

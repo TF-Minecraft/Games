@@ -34,9 +34,7 @@ class CitizenTaxTest {
     }
 
     @Test
-    void levyIsNoneWhenDenarEconomyAbsent() {
-        CitizenTax.Levy levy = CitizenTax.levy(null, 100);
-        assertEquals(0, levy.chips());
-        assertEquals(0.0, levy.tax());
+    void missingCharacterDefersAProfitPayout() {
+        org.junit.jupiter.api.Assertions.assertNull(CitizenTax.quote(null, 100));
     }
 }

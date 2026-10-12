@@ -326,6 +326,9 @@ class TableManagerLifecycleTest extends TableManagerFixture {
 
     private JsonObject document(UUID id, String gameId) {
         JsonObject document = new JsonObject();
+        JsonObject characters = new JsonObject();
+        characters.addProperty(player.getUniqueId().toString(), net.tfminecraft.games.support.TestCharacters.ref(player).characterId().toString());
+        document.add("wagerCharacters", characters);
         document.addProperty("id", id.toString());
         document.addProperty("gameId", gameId);
         document.addProperty("world", world.getName());

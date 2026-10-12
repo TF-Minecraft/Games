@@ -1,6 +1,11 @@
 package net.tfminecraft.games.wager;
 
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import net.tfminecraft.denareconomy.api.Denars;
+import net.tfminecraft.tlibs.character.CharacterRef;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -52,6 +57,12 @@ public final class MoneyTx {
     private final String reason;
     private final List<Leg> legs = new ArrayList<>();
     private List<PayoutFlight> flights;
+    private TxResult completed;
+    private CitizenTax.Levy taxQuote;
+    private String operationId;
+    MoneyTx taxQuote(CitizenTax.Levy quote) { this.taxQuote = quote; return this; }
+    String operationId() { return operationId; }
+    private final Map<UUID, CharacterRef> characters = new java.util.HashMap<>();
 
     MoneyTx(WagerHost host, Table table, String reason) {
         this.host = host;
@@ -156,16 +167,42 @@ public final class MoneyTx {
 
     /** Plan every leg, then carry them all out. Nothing moves unless all of it can. */
     public TxResult commit() {
+        if (completed != null) return completed;
+        characters.clear();
+        for (Leg leg : legs) if (leg.pool != null) leg.pool[0] = leg.denars;
         if (table == null || host == null) {
             return TxResult.failed(TxResult.Reason.NO_TABLE, 0, 0);
         }
+        if (table.moneyBlocked() || (WagerJournal.blocked(table) && !WagerJournal.retryable(table)))
+            return TxResult.failed(TxResult.Reason.BANK_SHORT, 0, 0);
         if (legs.isEmpty()) {
             return TxResult.nothing();
         }
         List<Planned> planned = new ArrayList<>();
+        Map<MoneyAccount, MoneyAccount> copies = new IdentityHashMap<>();
+        Map<String, MoneyAccount> sources = new java.util.HashMap<>();
         for (Leg leg : legs) {
-            int want = wanted(leg);
-            Withdrawal plan = want > 0 ? plan(leg, want) : null;
+            String sourceKey = leg.from instanceof BucketAccount ? "bucket:" + leg.from.feltOwner()
+                    : leg.from instanceof PlayerAccount ? "player:" + leg.from.flightTarget()
+                    : leg.from instanceof BankAccount ? "bank:" + leg.from.ledgerAccount() : null;
+            if (sourceKey != null) {
+                MoneyAccount prior = sources.putIfAbsent(sourceKey, leg.from);
+                if (prior != null && prior != leg.from) return TxResult.failed(TxResult.Reason.NO_CHANGE, leg.denars, 0);
+            }
+            if (leg.from instanceof PlayerAccount player) {
+                var character = player.character();
+                var captured = table.wagerCharacters().get(player.flightTarget());
+                if (character == null || (captured != null && !captured.equals(character)))
+                    return TxResult.failed(TxResult.Reason.PLAYER_SHORT, leg.denars, 0);
+                characters.put(player.flightTarget(), character);
+            }
+            if (leg.pool != null && leg.pool[0] < 1) continue;
+            MoneyAccount copy = copies.computeIfAbsent(leg.from, source -> {
+                MoneyAccount detached = source.planningCopy();
+                return detached == null ? source : detached;
+            });
+            int want = wanted(leg, copy);
+            Withdrawal plan = want > 0 ? plan(leg, copy, want) : null;
             if (plan == null) {
                 if (leg.mode == Mode.EXACT) {
                     return TxResult.failed(refusal(leg, want), want,
@@ -176,18 +213,70 @@ public final class MoneyTx {
             if (!leg.to.canAccept(plan.denars())) {
                 return TxResult.failed(TxResult.Reason.BANK_SHORT, want, 0);
             }
+            // Only a leg that will actually pay someone needs its captured character checked;
+            // an empty tray or bucket plans nothing and must not freeze the table.
+            if (leg.to instanceof PlayerAccount recipient && recipient.flightTarget() != null) {
+                CharacterRef expected = table.wagerCharacters().get(recipient.flightTarget());
+                if (expected == null || (recipient.online() && !expected.equals(recipient.character()))) {
+                    WagerJournal.quarantine(table, "Payout character changed: owner=" + recipient.flightTarget() + ", expected=" + expected);
+                    return TxResult.failed(TxResult.Reason.PLAYER_SHORT, plan.denars(), 0);
+                }
+            }
             if (leg.pool != null) {
                 leg.pool[0] -= plan.denars();
+            }
+            if (copy != leg.from) {
+                List<Stake> preview = plan.preview();
+                int denars = plan.denars();
+                if (TableLedger.valueOf(plan.take()) != denars) throw new IllegalStateException("Planning reservation failed");
+                Withdrawal captured = leg.from instanceof BankAccount ? leg.from.planTake(denars, leg.template) : null;
+                plan = new Withdrawal() {
+                    public int denars() { return denars; }
+                    public List<Stake> preview() { return preview; }
+                    public List<Stake> take() {
+                        Withdrawal current = captured != null ? captured : MoneyTx.this.plan(leg, leg.from, denars);
+                        return current == null ? List.of() : current.take();
+                    }
+                };
             }
             planned.add(new Planned(leg, plan));
         }
         if (planned.isEmpty()) {
             return TxResult.nothing();
         }
-        return apply(planned);
+        boolean ledgerBacked = planned.stream().anyMatch(step -> step.leg().from instanceof BankAccount
+                || step.leg().to instanceof BankAccount || step.leg().to instanceof TaxSink);
+        if (!ledgerBacked) {
+            if (WagerJournal.blocked(table)) return TxResult.failed(TxResult.Reason.BANK_SHORT, 0, 0);
+            return completed = apply(planned);
+        }
+        WagerJournal.Plan ledger = ledgerPlan(planned);
+        if (!Denars.taxReady()) return TxResult.failed(TxResult.Reason.BANK_SHORT, 0, 0);
+        Map<MoneyAccount, Object> snapshots = new IdentityHashMap<>();
+        for (Planned step : planned) {
+            MoneyAccount from = step.leg().from;
+            if (from instanceof PlayerAccount player) snapshots.put(from, player.snapshot());
+            if (from instanceof BucketAccount bucket) snapshots.put(from, bucket.snapshot());
+            if (step.leg().to instanceof PlayerAccount player) snapshots.put(player, player.snapshot());
+        }
+        TxResult result = WagerJournal.apply(table, ledger, id -> operationId = id, () -> {
+            for (var entry : snapshots.entrySet()) {
+                Object current = entry.getKey() instanceof PlayerAccount player ? player.snapshot()
+                        : ((BucketAccount) entry.getKey()).snapshot();
+                if (!entry.getValue().equals(current)) throw new IllegalStateException("Physical money or character changed during posting");
+            }
+            for (Planned step : planned) {
+                if (step.leg().from instanceof BankAccount bank) bank.authorizeDebit(step.plan().denars());
+                if (step.leg().to instanceof BankAccount bank) bank.authorizeCredit(step.plan().denars());
+                if (step.leg().to instanceof TaxSink tax) tax.authorize(step.plan().denars());
+            }
+            return apply(planned);
+        });
+        if (result.ok()) completed = result;
+        return result;
     }
 
-    private int wanted(Leg leg) {
+    private int wanted(Leg leg, MoneyAccount source) {
         if (leg.mode == Mode.ALL) {
             return Integer.MAX_VALUE;
         }
@@ -195,14 +284,48 @@ public final class MoneyTx {
         if (asked < 1) {
             return 0;
         }
-        return leg.mode == Mode.UP_TO ? leg.from.largestTakeUpTo(asked, leg.template) : asked;
+        return leg.mode == Mode.UP_TO ? source.largestTakeUpTo(asked, leg.template) : asked;
     }
 
-    private Withdrawal plan(Leg leg, int want) {
+    private Withdrawal plan(Leg leg, MoneyAccount source, int want) {
         if (leg.mode == Mode.ALL) {
-            return leg.from.planTakeAll(leg.street);
+            return source.planTakeAll(leg.street);
         }
-        return leg.from.planTake(want, leg.template);
+        return source.planTake(want, leg.template);
+    }
+
+    private WagerJournal.Plan ledgerPlan(List<Planned> planned) {
+        List<net.tfminecraft.denareconomy.api.Leg> money = new ArrayList<>();
+        List<WagerJournal.Movement> movements = new ArrayList<>();
+        int nextFloat = table.houseFloat();
+        int profit = 0;
+        for (Planned step : planned) {
+            Leg leg = step.leg();
+            int value = step.plan().denars();
+            String from = leg.from.ledgerAccount();
+            String to = leg.to.ledgerAccount();
+            if (from != null || to != null) {
+                money.add(new net.tfminecraft.denareconomy.api.Leg(from == null ? Denars.MINT : from, -value * 100L));
+                money.add(new net.tfminecraft.denareconomy.api.Leg(to == null ? Denars.MINT : to, value * 100L));
+            }
+            if (leg.from instanceof BankAccount) nextFloat = Math.addExact(nextFloat, value);
+            if (leg.to instanceof BankAccount) {
+                int repaid = Math.min(value, nextFloat);
+                nextFloat -= repaid;
+                profit = Math.addExact(profit, value - repaid);
+            }
+            List<String> items = step.plan().preview().stream().map(stake ->
+                    Base64.getEncoder().encodeToString(stake.item().serializeAsBytes()) + ":" + stake.unit()
+                            + ":" + stake.count() + ":" + stake.streetId()).toList();
+            movements.add(new WagerJournal.Movement(identity(leg.from), identity(leg.to), value, items,
+                    leg.to instanceof TaxSink tax ? tax.levy() : null));
+        }
+        return new WagerJournal.Plan(reason, money, movements, table.houseFloat(), nextFloat, profit, Map.copyOf(table.wagerCharacters()), taxQuote);
+    }
+
+    private String identity(MoneyAccount account) {
+        return account.ledgerAccount() != null ? account.ledgerAccount()
+                : account.label() + ":" + account.feltOwner() + ":" + account.flightTarget();
     }
 
     /** Why an exact leg could not be met, so the player gets told the real reason. */
@@ -226,6 +349,8 @@ public final class MoneyTx {
     }
 
     private TxResult apply(List<Planned> planned) {
+        boolean strict = planned.stream().anyMatch(step -> step.leg().from instanceof BankAccount
+                || step.leg().to instanceof BankAccount || step.leg().to instanceof TaxSink);
         int feltBefore = table.ledger().total();
         int expected = 0;
         int moved = 0;
@@ -237,21 +362,22 @@ public final class MoneyTx {
             List<Stake> coins = step.plan().take();
             int value = TableLedger.valueOf(coins);
             if (value != step.plan().denars()) {
-                MoneyLog.mismatch(table, "planned " + step.plan().denars() + " out of "
-                        + leg.from.label() + " but moved " + value + " (" + reason + ")");
+                if (strict) throw new IllegalStateException("Planned " + step.plan().denars() + " from " + leg.from.label() + " but moved " + value);
+                MoneyLog.mismatch(table, "planned " + step.plan().denars() + " out of " + leg.from.label() + " but moved " + value);
             }
             if (value < 1) {
                 continue;
             }
             int absorbed = leg.to.accept(coins);
             if (absorbed < value) {
-                // Nothing sensible to do but hand it back where it came from, and shout.
-                MoneyLog.mismatch(table, leg.to.label() + " only took " + absorbed + " of " + value
-                        + ", returning it to " + leg.from.label() + " (" + reason + ")");
+                if (strict) throw new IllegalStateException("Destination accepted " + absorbed + " of " + value);
+                MoneyLog.mismatch(table, "Destination only took " + absorbed + " of " + value + ", returning it");
                 leg.from.accept(coins);
                 continue;
             }
             MoneyLog.move(table, leg.from.label(), leg.to.label(), value, reason);
+            if (leg.from instanceof PlayerAccount player)
+                table.wagerCharacters().putIfAbsent(player.flightTarget(), characters.get(player.flightTarget()));
             table.roundMoney().recordLeg(leg.from, leg.to, coins);
             if (flights != null && from != null) {
                 flights.addAll(host.flights(table, coins, from, leg.to.flightTarget(),

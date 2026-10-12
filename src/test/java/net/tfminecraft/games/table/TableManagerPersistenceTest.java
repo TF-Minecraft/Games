@@ -147,6 +147,8 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         saved.add("discarded", json.toJsonTree(List.of("one")));
         saved.addProperty("ownerPlayer", player.getUniqueId().toString());
         saved.addProperty("ownerGuildId", "guild");
+        saved.addProperty("ownerGuildIncarnation", UUID.randomUUID().toString());
+        saved.addProperty("ownerGuildMigrated", true);
         saved.addProperty("autoDealer", true);
         saved.addProperty("staffMint", false);
         saved.addProperty("houseFloat", 17);
@@ -503,6 +505,8 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         Bank bank = mock(Bank.class);
         Ledger ledger = mock(Ledger.class);
         when(guild.getId()).thenReturn("recovery-guild");
+        UUID incarnation = UUID.randomUUID();
+        when(guild.getIncarnationId()).thenReturn(incarnation);
         when(guild.getBank()).thenReturn(bank);
         when(guild.getLedger()).thenReturn(ledger);
         Faction faction = mock(Faction.class, RETURNS_DEEP_STUBS);
@@ -523,8 +527,9 @@ class TableManagerPersistenceTest extends TableManagerFixture {
             if (staffMint) {
                 verifyNoInteractions(bank, ledger);
             } else {
-                verify(bank).deposit(5.0);
-                verifyNoMoreInteractions(bank);
+                verifyNoInteractions(bank);
+                denars.verify(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), argThat(legs ->
+                        legs.stream().anyMatch(leg -> leg.account().equals("guild:" + incarnation) && leg.cents() == 500))));
                 verifyNoInteractions(ledger);
                 assertEquals(0, manager.table(id).houseFloat());
             }
@@ -564,6 +569,7 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         JsonObject saved = document(id);
         saved.getAsJsonArray("ledger").add(stake(id, 4));
         saved.addProperty("floatOwner", gone.getUniqueId().toString());
+        saved.getAsJsonObject("wagerCharacters").addProperty(gone.getUniqueId().toString(), net.tfminecraft.games.support.TestCharacters.ref(gone).characterId().toString());
         write(id + ".json", saved);
         manager.loadAll();
         Table loaded = manager.table(id);
@@ -615,8 +621,68 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         assertEquals(requireDeck, read(table.getId()).get("deckConsumed").getAsBoolean());
     }
 
+    @Test void legacyStakeWithoutCapturedCharacterRetainsItemsAndBlocksResetAcrossRestart() throws Exception {
+        UUID id = UUID.randomUUID();
+        JsonObject saved = document(id);
+        saved.remove("wagerCharacters");
+        saved.getAsJsonArray("ledger").add(stake(player.getUniqueId(), 3));
+        write(id + ".json", saved);
+        manager.loadAll();
+        Table frozen = manager.table(id);
+        assertTrue(frozen.moneyBlocked());
+        assertEquals(3, frozen.ledger().total());
+        assertEquals(0, inventoryGold());
+        assertTrue(Files.exists(data.resolve("Data/wager-intents/" + id + ".json")));
+        manager.loadAll();
+        assertTrue(manager.table(id).moneyBlocked());
+        assertEquals(3, manager.table(id).ledger().total());
+        assertEquals(0, inventoryGold());
+    }
+
+    @Test void deferredPassesSkipUnchangedUnloadableFilesUntilTheyAreFixed() throws Exception {
+        Files.createDirectories(folder());
+        Files.writeString(folder().resolve("broken.json"), "{\"id\":");
+        JsonObject invalid = document(UUID.randomUUID());
+        invalid.addProperty("id", "not-a-uuid");
+        write("invalid-id.json", invalid);
+        manager.loadDeferred();
+        manager.loadDeferred();
+        verify(Games.plugin.getLogger(), times(1)).warning(contains("Failed to load table broken.json"));
+        verify(Games.plugin.getLogger(), times(1)).warning(contains("invalid-id.json"));
+        assertTrue(manager.tables().isEmpty());
+        UUID fixed = UUID.randomUUID();
+        write("broken.json", document(fixed));
+        manager.loadDeferred();
+        assertNotNull(manager.table(fixed), "a repaired file is picked up on the next deferred pass");
+    }
+
+    @Test void deferredPassesKeepRetryingTablesWhoseWorldIsMissing() throws Exception {
+        UUID id = UUID.randomUUID();
+        JsonObject saved = document(id);
+        saved.addProperty("world", "unloaded-world");
+        write(id + ".json", saved);
+        manager.loadDeferred();
+        manager.loadDeferred();
+        verify(Games.plugin.getLogger(), times(2)).warning(contains("Table world missing: unloaded-world"));
+        assertNull(manager.table(id));
+    }
+
+    @Test void deferredLoadingDoesNotReplaceAnActiveTableStoredUnderAnImportedFilename() throws Exception {
+        UUID id = UUID.randomUUID();
+        write("imported.json", document(id));
+        manager.loadAll();
+        Table active = manager.table(id);
+        active.startSession();
+        manager.loadDeferred();
+        assertSame(active, manager.table(id));
+        assertTrue(active.live());
+    }
+
     private JsonObject document(UUID id) {
         JsonObject document = new JsonObject();
+        JsonObject characters = new JsonObject();
+        characters.addProperty(player.getUniqueId().toString(), net.tfminecraft.games.support.TestCharacters.ref(player).characterId().toString());
+        document.add("wagerCharacters", characters);
         document.addProperty("id", id.toString());
         document.addProperty("gameId", "freeplay");
         document.addProperty("world", world.getName());

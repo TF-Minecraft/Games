@@ -156,7 +156,7 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
                     && item.getType() == Material.GOLD_BLOCK)))
                     .thenReturn(List.of(new ItemStack(Material.GOLD_NUGGET, 100)));
             int profit = firstRank == 1 ? 150 : 100;
-            tax.when(() -> CitizenTax.levy(player, profit)).thenReturn(new CitizenTax.Levy(10, 10));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(player), profit)).thenReturn(new CitizenTax.Levy(10, 10));
             player.getInventory().setItemInMainHand(pouch);
             clickFeltAt(player, 0);
             assertEquals(100, manager.ownedDenars(table, player.getUniqueId()));
@@ -465,7 +465,7 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
     }
 
     @Test
-    void aDealerWithNoFloatWhoLogsOffMidRoundLeavesTheTableFreeToDeal() throws Exception {
+    void aDealerWithNoFloatWhoLogsOffMidRoundLeavesARecordedWinningObligation() throws Exception {
         restoreShoe(fullDeck(), List.of("oseni_10", "clubs_10", "oseni_9", "clubs_8"));
         openBets();
         player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 4));
@@ -474,12 +474,18 @@ class TableManagerBlackjackRoundTest extends TableManagerFixture {
         manager.onQuit(new PlayerQuitEvent(dealer, "quit"));
         dealer.disconnect();
         manager.applyPlayCall(player, "stand");
-        advanceUntil(() -> !table.live());
-        assertEquals(4, gold(player), "nineteen beats eighteen, but the dealer left nothing to pay the win with");
-        assertNull(table.floatOwner(), "an empty tray holds nothing for anyone");
+        advanceUntil(() -> BlackjackGame.SETTLE.equals(table.phase()));
+        assertTrue(table.moneyBlocked());
+        assertTrue(table.live());
+        assertEquals(2, gold(player), "Original stake remains on the frozen table beside the unpaid win");
+        assertEquals(2, manager.ownedDenars(table, player.getUniqueId()));
+        var review = com.google.gson.JsonParser.parseString(Files.readString(data.resolve(
+                "Data/wager-intents/" + table.getId() + ".json"))).getAsJsonObject();
+        assertTrue(review.getAsJsonArray("unpaidOutcomes").get(0).getAsJsonObject().get("reason").getAsString().contains("remaining=2"));
+        assertEquals(dealer.getUniqueId(), table.floatOwner(), "Frozen settlement retains the departed dealer identity for review");
         player.addAttachment(Games.plugin, "games.admin", true);
         clickShoe(player);
-        assertEquals(player.getUniqueId(), table.dealerId());
+        assertNull(table.dealerId(), "A frozen obligation cannot be assigned to another dealer");
     }
 
     /**

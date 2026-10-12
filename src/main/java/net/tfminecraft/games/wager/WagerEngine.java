@@ -128,7 +128,9 @@ public final class WagerEngine {
         int coinTotal = coinPot(table);
         int moved = 0;
         if (coinTotal > 0 && winner != null) {
-            moved += payPotCoins(table, dest, winner, coinTotal, flights, reason).moved();
+            TxResult paid = payPotCoins(table, dest, winner, coinTotal, flights, reason);
+            if (!paid.ok()) return paid;
+            moved += paid.moved();
         }
         List<UUID> owners = potOwners(table);
         if (owners.isEmpty()) {
@@ -140,6 +142,10 @@ public final class WagerEngine {
             tx.moveAll(Accounts.bucket(table, owner), payee);
         }
         TxResult swept = tx.commit();
+        if (!swept.ok()) {
+            WagerJournal.quarantine(table, "Unpaid residual pot/loot: owner=" + winner + ", coin portion already moved=" + moved);
+            return swept;
+        }
         return TxResult.done(moved + swept.moved(), flights);
     }
 
@@ -222,42 +228,55 @@ public final class WagerEngine {
             List<PayoutFlight> flights, String reason) {
         int profit = table.roundMoney().taxableProfit(owner, denars);
         int returnedPrincipal = denars - profit;
-        CitizenTax.Levy levy = CitizenTax.levy(dest, profit);
+        CitizenTax.Levy levy = quote(table, owner, profit);
+        if (levy == null) {
+            WagerJournal.quarantine(table, "Unresolved pot tax/payout: owner=" + owner + ", gross=" + denars + ", profit=" + profit);
+            return TxResult.failed(TxResult.Reason.BANK_SHORT, denars, 0);
+        }
         int net = denars - levy.chips();
         MoneyAccount payee = Accounts.payee(table, dest, owner);
         List<MoneyAccount> sources = potAccounts(table);
 
-        int moved = 0;
-        if (net > 0) {
-            moved += begin(table, reason).animate(flights)
-                    .spread(payee, net, sources)
-                    .commit()
-                    .moved();
+        TaxSink tax = new TaxSink(levy);
+        MoneyTx tx = begin(table, reason).taxQuote(levy).animate(flights);
+        if (net > 0) tx.spread(payee, net, sources);
+        if (levy.chips() > 0) tx.spread(tax, levy.chips(), sources);
+        TxResult result = tx.commit();
+        if (!result.ok()) {
+            WagerJournal.quarantine(table, "Unpaid pot outcome: owner=" + owner + ", gross=" + denars + ", profit=" + profit + ", quote=" + levy);
+            return result;
         }
-        if (levy.chips() > 0) {
-            int taxMoved = begin(table, "citizen tax").animate(flights)
-                    .spread(Accounts.taxSink(), levy.chips(), sources)
-                    .commit()
-                    .moved();
-            if (taxMoved > 0) {
-                CitizenTax.tell(dest, levy.tax());
-            }
-            moved += taxMoved;
-        }
+        int moved = result.moved();
+        if (tax.received() > 0) CitizenTax.tell(dest, tax.received());
         table.roundMoney().recordProfit(owner, Math.max(0, moved - returnedPrincipal));
+        if (moved < denars) WagerJournal.quarantine(table, "Partial pot outcome: owner=" + owner
+                + ", gross=" + denars + ", moved=" + moved + ", remaining=" + (denars - moved)
+                + ", withheld=" + tax.received() + ", posting=" + tx.operationId() + ", quote=" + levy);
         return moved > 0 ? TxResult.done(moved, flights) : TxResult.nothing();
+    }
+
+    private CitizenTax.Levy quote(Table table, UUID owner, int profit) {
+        try {
+            return CitizenTax.quote(table.wagerCharacters().get(owner), profit);
+        } catch (RuntimeException | LinkageError ex) {
+            return null;
+        }
     }
 
     /**
      * Pay blackjack win profit to a player, withholding citizen tax to the sink first. Tray pays
-     * before whoever backs the table; tax chips are destroyed rather than banked.
+     * before whoever backs the table; withheld chips credit the captured tax jurisdiction.
      */
     public PayWinResult payWin(Table table, Player winner, UUID owner, int profit, Player dealer,
             boolean dealerBacked, ItemStack template, List<PayoutFlight> flights) {
         if (profit < 1) {
             return PayWinResult.NONE;
         }
-        CitizenTax.Levy levy = CitizenTax.levy(winner, profit);
+        CitizenTax.Levy levy = quote(table, owner, profit);
+        if (levy == null) {
+            WagerJournal.quarantine(table, "Unresolved win tax/payout: owner=" + owner + ", profit=" + profit);
+            return new PayWinResult(0, 0, profit);
+        }
         int net = profit - levy.chips();
         MoneyAccount payee = Accounts.payee(table, winner, owner);
         List<MoneyAccount> sources = winSources(table, dealer, dealerBacked);
@@ -268,30 +287,22 @@ public final class WagerEngine {
         }
 
         int trayBefore = tray(table);
-        int paidNet = 0;
-        if (net > 0) {
-            paidNet = begin(table, "win payout").animate(flights)
-                    .spread(payee, net, sources, template)
-                    .commit()
-                    .moved();
+        TaxSink tax = new TaxSink(levy);
+        MoneyTx tx = begin(table, "win payout").taxQuote(levy).animate(flights);
+        if (net > 0) tx.spread(payee, net, sources, template);
+        if (levy.chips() > 0) tx.spread(tax, levy.chips(), sources, template);
+        TxResult result = tx.commit();
+        if (!result.ok()) {
+            WagerJournal.quarantine(table, "Unpaid win outcome: owner=" + owner + ", profit=" + profit + ", quote=" + levy);
+            return new PayWinResult(0, 0, profit);
         }
+        int moved = result.moved();
         int trayMoved = trayBefore - tray(table);
-
-        int paidTax = 0;
-        if (levy.chips() > 0) {
-            int trayBeforeTax = tray(table);
-            paidTax = begin(table, "citizen tax").animate(flights)
-                    .spread(Accounts.taxSink(), levy.chips(), sources, template)
-                    .commit()
-                    .moved();
-            if (paidTax > 0) {
-                CitizenTax.tell(winner, levy.tax());
-            }
-            trayMoved += trayBeforeTax - tray(table);
-        }
-
-        int moved = paidNet + paidTax;
+        if (tax.received() > 0) CitizenTax.tell(winner, tax.received());
         table.roundMoney().recordProfit(owner, moved);
+        if (moved < profit) WagerJournal.quarantine(table, "Partial win outcome: owner=" + owner
+                + ", profit=" + profit + ", moved=" + moved + ", remaining=" + (profit - moved)
+                + ", withheld=" + tax.received() + ", posting=" + tx.operationId() + ", quote=" + levy);
         return new PayWinResult(moved, trayMoved, Math.max(0, profit - moved));
     }
 

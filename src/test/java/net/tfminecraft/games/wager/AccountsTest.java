@@ -147,8 +147,7 @@ class AccountsTest {
 
     @Test
     void citizenTaxSinkConsumesValueWithoutEverOfferingAWithdrawal() {
-        MoneyAccount sink = Accounts.taxSink();
-        assertSame(sink, Accounts.taxSink());
+        TaxSink sink = new TaxSink(new CitizenTax.Levy(6, 6));
         assertEquals("citizen tax", sink.label());
         assertEquals(0, sink.available());
         assertNull(sink.planTake(1, null));
@@ -156,7 +155,10 @@ class AccountsTest {
         assertEquals(0, sink.largestTakeUpTo(100, null));
         assertTrue(sink.canAccept(100));
         assertEquals(0, sink.accept(null));
+        assertEquals(0, sink.accept(List.of(new Stake(null, "coin", 2, 3, 0))));
+        sink.authorize(6);
         assertEquals(6, sink.accept(List.of(new Stake(null, "coin", 2, 3, 0))));
+        assertEquals(0, sink.accept(List.of(new Stake(null, "coin", 2, 3, 0))));
         assertFalse(sink.onFelt());
         assertFalse(sink.isTray());
         assertNull(sink.feltOwner());

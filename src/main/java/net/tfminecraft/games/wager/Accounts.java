@@ -82,11 +82,6 @@ public final class Accounts {
         return new MintAccount(table, table.street());
     }
 
-    /** Where withheld citizen tax chips are destroyed. Not on the felt and not in a bank. */
-    public static MoneyAccount taxSink() {
-        return TaxSink.INSTANCE;
-    }
-
     /**
      * Wherever this table's house money comes from: the mint on a staff table, the guild bank
      * on a real one. Saves every caller repeating that branch and getting it slightly different.

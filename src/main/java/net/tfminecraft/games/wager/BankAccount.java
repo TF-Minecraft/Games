@@ -16,11 +16,27 @@ public final class BankAccount implements MoneyAccount {
 
     private final Table table;
     private final int streetId;
+    private Integer planningBalance;
+    private int authorizedDebit;
+    private int authorizedCredit;
 
     BankAccount(Table table, int streetId) {
         this.table = table;
         this.streetId = streetId;
     }
+
+    @Override
+    public MoneyAccount planningCopy() {
+        BankAccount copy = new BankAccount(table, streetId);
+        copy.planningBalance = available();
+        return copy;
+    }
+
+    @Override
+    public String ledgerAccount() { return GuildBank.account(table); }
+
+    void authorizeDebit(int denars) { authorizedDebit = Math.addExact(authorizedDebit, denars); }
+    void authorizeCredit(int denars) { authorizedCredit = Math.addExact(authorizedCredit, denars); }
 
     @Override
     public String label() {
@@ -29,7 +45,7 @@ public final class BankAccount implements MoneyAccount {
 
     @Override
     public int available() {
-        return GuildBank.balance(table.ownerGuildId());
+        return planningBalance != null ? planningBalance : GuildBank.balance(table);
     }
 
     @Override
@@ -61,7 +77,7 @@ public final class BankAccount implements MoneyAccount {
 
     @Override
     public boolean canAccept(int denars) {
-        return denars < 1 || GuildBank.canHold(table.ownerGuildId());
+        return denars < 1 || GuildBank.canHold(table);
     }
 
     @Override
@@ -70,17 +86,10 @@ public final class BankAccount implements MoneyAccount {
         if (value < 1) {
             return 0;
         }
-        if (!GuildBank.deposit(table.ownerGuildId(), value)) {
-            return 0;
-        }
-        // The float comes home before anything is called a win, so a table that has been losing
-        // has to earn its way back to level before the guild owes tax on any of it.
+        if (authorizedCredit < value) return 0;
+        authorizedCredit -= value;
         int repaid = Math.min(value, table.houseFloat());
         table.setHouseFloat(table.houseFloat() - repaid);
-        int profit = value - repaid;
-        if (profit > 0) {
-            GuildBank.declareProfit(table.ownerGuildId(), profit);
-        }
         return value;
     }
 
@@ -110,10 +119,14 @@ public final class BankAccount implements MoneyAccount {
 
         @Override
         public List<Stake> take() {
-            if (!GuildBank.withdraw(table.ownerGuildId(), denars)) {
-                return new ArrayList<>();
+            if (planningBalance != null) {
+                if (planningBalance < denars) return new ArrayList<>();
+                planningBalance -= denars;
+                return coins();
             }
-            table.setHouseFloat(table.houseFloat() + denars);
+            if (authorizedDebit < denars) return new ArrayList<>();
+            authorizedDebit -= denars;
+            table.setHouseFloat(Math.addExact(table.houseFloat(), denars));
             return coins();
         }
 

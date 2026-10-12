@@ -196,6 +196,7 @@ class TableManagerChipLayoutTest extends TableManagerFixture {
     @Test
     void hiddenChipsKeepAmountLabelsCurrentThroughRefundsAndRestoreWithoutLosingMoney() {
         Table table = place(false);
+        table.wagerCharacters().put(player.getUniqueId(), net.tfminecraft.games.support.TestCharacters.ref(player));
         restore(table, player.getUniqueId(), Material.GOLD_NUGGET, 1, 4, -0.75, 0.4);
         restore(table, table.getId(), Material.GOLD_NUGGET, 1, 3, null, null);
         manager.syncAllChips(table);
@@ -313,6 +314,7 @@ class TableManagerChipLayoutTest extends TableManagerFixture {
     void trayWithoutConfiguredSlotUsesTableOriginAndStillPaysItsRealBalance() {
         Cache.tableLayouts.remove("freeplay");
         Table table = place(false);
+        table.wagerCharacters().put(player.getUniqueId(), net.tfminecraft.games.support.TestCharacters.ref(player));
         restore(table, table.getId(), Material.GOLD_NUGGET, 1, 2, null, null);
         manager.syncBucketChips(table, table.getId());
         PotPile pile = table.getPiles().getFirst();

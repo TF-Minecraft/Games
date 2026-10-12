@@ -53,6 +53,28 @@ public final class BucketAccount implements MoneyAccount {
         return owner;
     }
 
+    Object snapshot() {
+        java.util.List<Object> state = new java.util.ArrayList<>();
+        for (Stake stake : table.ledger().stakes(owner)) {
+            state.add(stake.item().clone());
+            state.add(stake.unit());
+            state.add(stake.count());
+            state.add(stake.streetId());
+        }
+        return state;
+    }
+
+    @Override
+    public MoneyAccount planningCopy() {
+        Table copy = new Table(table.getId(), table.getGameId(), null, 0, null);
+        for (Stake stake : table.ledger().stakes(owner)) {
+            copy.ledger().add(owner, stake.item().clone(), stake.typeKey(), stake.unit(), stake.count(), stake.streetId());
+        }
+        BucketAccount account = new BucketAccount(copy, owner);
+        account.street = street;
+        return account;
+    }
+
     @Override
     public String label() {
         return isTray() ? "tray" : "felt";

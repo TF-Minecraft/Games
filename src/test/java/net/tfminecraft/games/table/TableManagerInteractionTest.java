@@ -142,7 +142,9 @@ class TableManagerInteractionTest extends TableManagerFixture {
         when(factions.isEnabled()).thenReturn(true);
         when(plugins.getPlugin("SimpleFactions")).thenReturn(factions);
         Guild guild = mock(Guild.class);
-        when(guild.getLeader()).thenReturn(leader.getName());
+        when(guild.isLeader(leader)).thenReturn(true);
+        table.setOwnerGuildIncarnation(UUID.randomUUID());
+        when(guild.getIncarnationId()).thenReturn(table.ownerGuildIncarnation());
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
                 MockedStatic<FactionManager> registry = mockStatic(FactionManager.class)) {
             bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
@@ -209,6 +211,7 @@ class TableManagerInteractionTest extends TableManagerFixture {
         assertNull(table.dealerId());
         verify(game).onDealerGone(table);
         assertSame(table, manager.table(table.getId()));
+        assertFalse(table.moneyBlocked(), "returning an empty tray must not freeze the table");
     }
 
     private Block surface(int x, int y, int z, double width, double height, double depth) {

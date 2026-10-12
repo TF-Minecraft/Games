@@ -41,6 +41,9 @@ class TableManagerStoredDataTest extends TableManagerFixture {
 
     private JsonObject document(UUID id) {
         JsonObject document = new JsonObject();
+        JsonObject characters = new JsonObject();
+        characters.addProperty(player.getUniqueId().toString(), net.tfminecraft.games.support.TestCharacters.ref(player).characterId().toString());
+        document.add("wagerCharacters", characters);
         document.addProperty("id", id.toString());
         document.addProperty("gameId", "freeplay");
         document.addProperty("world", world.getName());
