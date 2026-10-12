@@ -21,6 +21,7 @@ import net.tfminecraft.games.table.Table;
 import net.tfminecraft.games.table.TableHouse;
 import net.tfminecraft.games.table.TableManager;
 import net.tfminecraft.simplefactions.enums.GuildModifier;
+import net.tfminecraft.simplefactions.api.SimpleFactionsApi;
 import net.tfminecraft.simplefactions.guild.Guild;
 import net.tfminecraft.simplefactions.managers.FactionManager;
 
@@ -29,6 +30,8 @@ class GuildTablesTest {
     private Games previousPlugin;
     private Logger logger;
     private MockedStatic<FactionManager> factions;
+    private MockedStatic<SimpleFactionsApi> api;
+    private static final UUID INCARNATION = UUID.fromString("00000000-0000-0000-0000-000000000111");
     private MockedStatic<TableManager> managers;
     private PluginManager plugins;
     private Plugin integration;
@@ -52,16 +55,19 @@ class GuildTablesTest {
         when(plugins.getPlugin("SimpleFactions")).thenReturn(integration);
         bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
         bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
+        api = mockStatic(SimpleFactionsApi.class);
+        api.when(SimpleFactionsApi::ready).thenReturn(true);
         factions = mockStatic(FactionManager.class);
         guild = mock(Guild.class);
         when(guild.getId()).thenReturn("guild");
+        when(guild.getIncarnationId()).thenReturn(INCARNATION);
         when(guild.getName()).thenReturn("The Guild");
-        when(guild.getLeader()).thenReturn("ALICE");
+        when(guild.isLeader(any(Player.class))).thenReturn(true);
         when(guild.getModifier(GuildModifier.AUTO_DEALER_TABLES)).thenReturn(2.0);
         player = mock(Player.class);
         when(player.getName()).thenReturn("Alice");
         when(player.getUniqueId()).thenReturn(UUID.randomUUID());
-        factions.when(() -> FactionManager.getGuildByMember("Alice")).thenReturn(guild);
+        factions.when(() -> FactionManager.getGuildByMember(player)).thenReturn(guild);
         factions.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
         TableManager manager = mock(TableManager.class);
         when(manager.tables()).thenReturn(tables);
@@ -72,6 +78,7 @@ class GuildTablesTest {
     @AfterEach
     void closeMocks() {
         if (managers != null) managers.close();
+        if (api != null) api.close();
         if (factions != null) factions.close();
         if (bukkit != null) bukkit.close();
         Games.plugin = previousPlugin;
@@ -160,9 +167,9 @@ class GuildTablesTest {
         TableHouse house = new TableHouse();
         assertNull(GuildTables.refuseKey(player, house, null));
         assertEquals("guild", house.ownerGuildId());
-        when(guild.getLeader()).thenReturn("Bob");
+        when(guild.isLeader(player)).thenReturn(false);
         assertEquals("place.not_leader", GuildTables.refuseKey(player, house, null));
-        when(guild.getLeader()).thenReturn("alice");
+        when(guild.isLeader(player)).thenReturn(true);
         tables.addAll(List.of(table("guild"), table("guild")));
         assertEquals("place.no_slots", GuildTables.refuseKey(player, house, null));
         assertNull(GuildTables.refuseKey(player, house, tables.getFirst()), "editing a counted table uses its existing slot");
@@ -182,14 +189,14 @@ class GuildTablesTest {
         TableHouse house = new TableHouse();
         house.setOwnerGuildId("deleted");
         assertEquals("place.not_leader", GuildTables.refuseKey(player, house, null));
-        when(guild.getLeader()).thenReturn(null);
+        when(guild.isLeader(player)).thenReturn(false);
         house.setOwnerGuildId("guild");
         assertEquals("place.not_leader", GuildTables.refuseKey(player, house, null));
     }
 
     @Test
     void guildlessPlacementIsRefusedButStaffMintNeedsNoGuildSlot() {
-        factions.when(() -> FactionManager.getGuildByMember("Alice")).thenReturn(null);
+        factions.when(() -> FactionManager.getGuildByMember(player)).thenReturn(null);
         assertEquals("place.no_guild", GuildTables.refuseKey(player, new TableHouse(), null));
         TableHouse staff = new TableHouse();
         staff.setStaffMint(true);
@@ -235,10 +242,10 @@ class GuildTablesTest {
 
     @Test
     void onlyTheLeaderOfTheOwningGuildLeadsItsTable() {
-        assertTrue(GuildTables.leadsOwner(table("guild"), player), "the leader is matched ignoring case");
-        when(guild.getLeader()).thenReturn("Bob");
+        assertTrue(GuildTables.leadsOwner(table("guild"), player), "the active character leads the captured guild incarnation");
+        when(guild.isLeader(player)).thenReturn(false);
         assertFalse(GuildTables.leadsOwner(table("guild"), player), "a member who does not lead it");
-        when(guild.getLeader()).thenReturn("Alice");
+        when(guild.isLeader(player)).thenReturn(true);
         assertFalse(GuildTables.leadsOwner(table(null), player), "a personal table has no guild to lead");
         assertFalse(GuildTables.leadsOwner(table(" "), player));
         assertFalse(GuildTables.leadsOwner(table("deleted"), player));
@@ -256,7 +263,7 @@ class GuildTablesTest {
     void incompatibleIntegrationCannotAuthorizePlacementOrDealing() {
         factions.when(() -> FactionManager.getGuildByString("guild"))
                 .thenThrow(new NoClassDefFoundError("guild API changed"));
-        factions.when(() -> FactionManager.getGuildByMember("Alice"))
+        factions.when(() -> FactionManager.getGuildByMember(player))
                 .thenThrow(new IllegalStateException("integration unavailable"));
         assertNull(GuildTables.guildId(player));
         assertNull(GuildTables.displayName("guild"));
@@ -285,6 +292,39 @@ class GuildTablesTest {
     private static Table table(String guild) {
         Table table = new Table(UUID.randomUUID(), "blackjack", null, 0, null);
         table.setOwnerGuildId(guild);
+        table.setOwnerGuildIncarnation(INCARNATION);
         return table;
+    }
+
+    @Test void installedFactionWaitingDisabledAndLookupFailuresFailClosed() {
+        Table table = table("guild");
+        api.when(SimpleFactionsApi::ready).thenReturn(false);
+        assertFalse(GuildTables.ready());
+        assertNull(GuildTables.guildId(player));
+        assertTrue(GuildTables.frozen(table));
+        api.when(SimpleFactionsApi::ready).thenReturn(true);
+        assertTrue(GuildTables.ready());
+        assertFalse(GuildTables.frozen(table));
+        when(integration.isEnabled()).thenReturn(false);
+        assertTrue(GuildTables.frozen(table));
+        when(integration.isEnabled()).thenReturn(true);
+        api.when(SimpleFactionsApi::ready).thenThrow(new IllegalStateException("waiting"));
+        assertFalse(GuildTables.ready());
+        assertTrue(GuildTables.frozen(table));
+    }
+
+    @Test void replacementGuildCannotUseOrCountAnOldIncarnationAndAccountNamesGiveNoRights() {
+        Table table = table("guild");
+        tables.add(table);
+        when(guild.getIncarnationId()).thenReturn(UUID.randomUUID());
+        assertEquals(0, GuildTables.count("guild"));
+        assertTrue(GuildTables.frozen(table));
+        assertFalse(GuildTables.leadsOwner(table, player));
+        when(guild.getIncarnationId()).thenReturn(INCARNATION);
+        when(guild.isLeader(player)).thenReturn(false);
+        when(guild.getLeader()).thenReturn("Alice");
+        assertFalse(GuildTables.leadsOwner(table, player));
+        when(guild.isLeader(player)).thenReturn(true);
+        assertTrue(GuildTables.leadsOwner(table, player));
     }
 }

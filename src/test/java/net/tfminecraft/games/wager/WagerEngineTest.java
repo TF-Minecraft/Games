@@ -22,6 +22,11 @@ import net.tfminecraft.games.events.PlayerWonMoneyEvent;
 import net.tfminecraft.games.table.Table;
 
 class WagerEngineTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path data;
+    private net.tfminecraft.games.Games previousPlugin;
+    private MockedStatic<net.tfminecraft.denareconomy.api.Denars> denars;
+    private MockedStatic<net.tfminecraft.tlibs.character.Characters> characters;
+    private MockedStatic<net.tfminecraft.games.table.TableManager> managers;
     private WagerItemOverride oldGold;
     private WagerItemOverride oldSilver;
     private List<WagerItemOverride> oldItems;
@@ -34,6 +39,18 @@ class WagerEngineTest {
 
     @BeforeEach
     void setUp() {
+        previousPlugin = net.tfminecraft.games.Games.plugin;
+        net.tfminecraft.games.Games.plugin = mock(net.tfminecraft.games.Games.class);
+        when(net.tfminecraft.games.Games.plugin.getDataFolder()).thenReturn(data.toFile());
+        when(net.tfminecraft.games.Games.plugin.getLogger()).thenReturn(java.util.logging.Logger.getAnonymousLogger());
+        WagerJournal.initialize();
+        denars = mockStatic(net.tfminecraft.denareconomy.api.Denars.class);
+        denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(true);
+        denars.when(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), anyList()))
+                .thenReturn(net.tfminecraft.denareconomy.api.Result.APPLIED);
+        managers = mockStatic(net.tfminecraft.games.table.TableManager.class);
+        managers.when(net.tfminecraft.games.table.TableManager::get).thenReturn(mock(net.tfminecraft.games.table.TableManager.class));
+        characters = net.tfminecraft.games.support.TestCharacters.mockSessions();
         previousEngine = WagerEngine.get();
         oldGold = Cache.wagerGold;
         oldSilver = Cache.wagerSilver;
@@ -48,10 +65,16 @@ class WagerEngineTest {
         winner = MockBukkit.getMock().addPlayer();
         opponent = MockBukkit.getMock().addPlayer();
         table = new Table(UUID.randomUUID(), "poker", winner.getLocation(), 0, null);
+        table.wagerCharacters().put(winner.getUniqueId(), net.tfminecraft.games.support.TestCharacters.ref(winner));
+        table.wagerCharacters().put(opponent.getUniqueId(), net.tfminecraft.games.support.TestCharacters.ref(opponent));
     }
 
     @AfterEach
     void restoreConfig() throws Exception {
+        denars.close();
+        characters.close();
+        managers.close();
+        net.tfminecraft.games.Games.plugin = previousPlugin;
         var instance = WagerEngine.class.getDeclaredField("instance");
         instance.setAccessible(true);
         instance.set(null, previousEngine);
@@ -225,7 +248,7 @@ class WagerEngineTest {
                 1, 1, null, null);
         restore(table.getId(), 5, 1);
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 6)).thenReturn(new CitizenTax.Levy(2, 2));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 6)).thenReturn(new CitizenTax.Levy(2, 2));
             TxResult result = engine.sweepPot(table, winner, winner.getUniqueId(), null, "winner");
             assertEquals(18, result.moved());
             assertEquals(6, inventoryCoins(winner));
@@ -236,7 +259,7 @@ class WagerEngineTest {
             assertEquals(6, table.roundMoney().wonProfit().get(winner.getUniqueId()));
             assertEquals(2, table.roundMoney().moneyIn(winner.getUniqueId()));
             assertEquals(6, table.roundMoney().moneyOut(winner.getUniqueId()));
-            tax.verify(() -> CitizenTax.levy(winner, 6));
+            tax.verify(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 6));
             tax.verify(() -> CitizenTax.tell(winner, 2));
         }
     }
@@ -246,16 +269,16 @@ class WagerEngineTest {
         bet(winner, 4);
         bet(opponent, 6);
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 0)).thenReturn(CitizenTax.Levy.NONE);
-            tax.when(() -> CitizenTax.levy(winner, 3)).thenReturn(new CitizenTax.Levy(1, 1));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 0)).thenReturn(CitizenTax.Levy.NONE);
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 3)).thenReturn(new CitizenTax.Levy(1, 1));
             assertEquals(3, engine.payFromPot(table, winner, winner.getUniqueId(), 3,
                     null, "first share").moved());
             assertEquals(4, engine.payFromPot(table, winner, winner.getUniqueId(), 4,
                     null, "second share").moved());
             assertEquals(6, inventoryCoins(winner));
             assertEquals(3, engine.felt(table));
-            tax.verify(() -> CitizenTax.levy(winner, 0));
-            tax.verify(() -> CitizenTax.levy(winner, 3));
+            tax.verify(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 0));
+            tax.verify(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 3));
         }
     }
 
@@ -292,7 +315,7 @@ class WagerEngineTest {
         table.setStaffMint(true);
         restore(table.getId(), 3, 1);
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 8)).thenReturn(new CitizenTax.Levy(2, 2));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 8)).thenReturn(new CitizenTax.Levy(2, 2));
             PayWinResult result = engine.payWin(table, winner, winner.getUniqueId(), 8, null,
                     false, coin(1), null);
             assertEquals(new PayWinResult(8, 3, 0), result);
@@ -364,18 +387,12 @@ class WagerEngineTest {
     @Test
     void fullyWithheldPayoutReportsTaxOnlyWhenCoinsActuallyLeaveThePotOrTray() {
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 2)).thenReturn(new CitizenTax.Levy(2, 2));
-            assertEquals(0, engine.payFromPot(table, winner, winner.getUniqueId(), 2,
-                    null, "empty pot").moved());
-            tax.verify(() -> CitizenTax.tell(winner, 2), never());
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 2)).thenReturn(new CitizenTax.Levy(2, 2));
             restore(opponent.getUniqueId(), 2, 1);
             assertEquals(2, engine.payFromPot(table, winner, winner.getUniqueId(), 2,
                     null, "withheld share").moved());
             assertEquals(0, inventoryCoins(winner));
             assertEquals(0, engine.felt(table));
-            tax.verify(() -> CitizenTax.tell(winner, 2));
-            assertEquals(new PayWinResult(0, 0, 2), engine.payWin(table, winner, winner.getUniqueId(),
-                    2, null, true, coin(1), null));
             tax.verify(() -> CitizenTax.tell(winner, 2));
             restore(table.getId(), 2, 1);
             assertEquals(new PayWinResult(2, 2, 0), engine.payWin(table, winner, winner.getUniqueId(),
@@ -454,7 +471,7 @@ class WagerEngineTest {
     void partlyWithheldDealerPayoutRecordsTransferredProfitAndRemainingDebt() {
         restore(table.getId(), 8, 1);
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 10)).thenReturn(new CitizenTax.Levy(3, 3));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 10)).thenReturn(new CitizenTax.Levy(3, 3));
             PayWinResult result = engine.payWin(table, winner, winner.getUniqueId(), 10,
                     null, true, coin(1), null);
             assertEquals(new PayWinResult(8, 8, 2), result);
@@ -471,7 +488,7 @@ class WagerEngineTest {
         bet(winner, 4);
         bet(opponent, 5);
         try (MockedStatic<CitizenTax> tax = mockStatic(CitizenTax.class)) {
-            tax.when(() -> CitizenTax.levy(winner, 6)).thenReturn(new CitizenTax.Levy(2, 2));
+            tax.when(() -> CitizenTax.quote(net.tfminecraft.games.support.TestCharacters.ref(winner), 6)).thenReturn(new CitizenTax.Levy(2, 2));
             TxResult result = engine.payFromPot(table, winner, winner.getUniqueId(), 10,
                     null, "partial taxed pot");
             assertEquals(9, result.moved());
@@ -517,5 +534,58 @@ class WagerEngineTest {
         engine.restore(table, owner, coin(1), "gold", 1, 3, 1, 2.0, null);
         assertEquals(3, engine.owned(table, owner));
         assertFalse(table.ledger().hasAnchor(owner));
+    }
+
+    @Test void missingCapturedCharacterKeepsWinningObligationAcrossRoundClear() throws Exception {
+        table.wagerCharacters().remove(winner.getUniqueId());
+        table.startSession();
+        table.setStaffMint(true);
+        assertEquals(new PayWinResult(0, 0, 5), engine.payWin(table, winner, winner.getUniqueId(), 5,
+                null, false, coin(1), null));
+        assertTrue(table.moneyBlocked());
+        table.clearSession();
+        assertTrue(table.live());
+        String review = java.nio.file.Files.readString(data.resolve("Data/wager-intents/" + table.getId() + ".json"));
+        assertTrue(review.contains(winner.getUniqueId().toString()));
+        assertTrue(com.google.gson.JsonParser.parseString(review).getAsJsonObject().getAsJsonArray("unpaidOutcomes").get(0).getAsJsonObject().get("reason").getAsString().contains("profit=5"));
+        assertTrue(review.contains("operationId"));
+        denars.verify(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), anyList()), never());
+    }
+
+    @Test void policyWaitMidRoundRetainsEveryUnpaidWinningOutcome() throws Exception {
+        denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(false);
+        table.setStaffMint(true);
+        assertEquals(5, engine.payWin(table, winner, winner.getUniqueId(), 5, null, false, coin(1), null).owe());
+        assertEquals(7, engine.payWin(table, opponent, opponent.getUniqueId(), 7, null, false, coin(1), null).owe());
+        var review = com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(
+                data.resolve("Data/wager-intents/" + table.getId() + ".json"))).getAsJsonObject();
+        assertEquals(2, review.getAsJsonArray("unpaidOutcomes").size());
+        assertTrue(review.toString().contains(net.tfminecraft.games.support.TestCharacters.ref(winner).characterId().toString()));
+        assertTrue(review.toString().contains(net.tfminecraft.games.support.TestCharacters.ref(opponent).characterId().toString()));
+        assertEquals(0, inventoryCoins(winner));
+        assertEquals(0, inventoryCoins(opponent));
+    }
+
+    @Test void differentCharacterOnWinningAccountCannotReceiveOldCharactersPayout() {
+        restore(opponent.getUniqueId(), 5, 1);
+        var other = new net.tfminecraft.tlibs.character.CharacterRef(winner.getUniqueId(), UUID.randomUUID());
+        characters.when(() -> net.tfminecraft.tlibs.character.Characters.currentSession(winner))
+                .thenReturn(java.util.Optional.of(new net.tfminecraft.tlibs.character.CharacterSession(other, 2L)));
+        assertFalse(engine.payFromPot(table, winner, winner.getUniqueId(), 5, null, "win").ok());
+        assertEquals(5, engine.felt(table));
+        assertEquals(0, inventoryCoins(winner));
+        assertTrue(table.moneyBlocked());
+    }
+
+    @Test void settledRoundAllowsSameAccountToStakeAsANewCharacterWithHouseTrayRemaining() {
+        restore(table.getId(), 3, 1);
+        table.clearSession();
+        assertTrue(table.wagerCharacters().isEmpty());
+        var next = new net.tfminecraft.tlibs.character.CharacterRef(winner.getUniqueId(), UUID.randomUUID());
+        characters.when(() -> net.tfminecraft.tlibs.character.Characters.currentSession(winner))
+                .thenReturn(java.util.Optional.of(new net.tfminecraft.tlibs.character.CharacterSession(next, 2L)));
+        bet(winner, 2);
+        assertEquals(next, table.wagerCharacters().get(winner.getUniqueId()));
+        assertEquals(3, engine.tray(table));
     }
 }

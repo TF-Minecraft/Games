@@ -15,6 +15,7 @@ public final class TableHouse {
 
     private UUID ownerPlayer;
     private String ownerGuildId;
+    private UUID ownerGuildIncarnation;
     private boolean autoDealer;
     private boolean staffMint;
     private int minBet;
@@ -53,6 +54,7 @@ public final class TableHouse {
         TableHouse house = new TableHouse();
         house.ownerPlayer = table.ownerPlayer();
         house.ownerGuildId = table.ownerGuildId();
+        house.ownerGuildIncarnation = table.ownerGuildIncarnation();
         house.autoDealer = table.autoDealer();
         house.staffMint = table.staffMint();
         house.minBet = Math.max(1, table.minBet());
@@ -67,6 +69,7 @@ public final class TableHouse {
     public void apply(Table table) {
         table.setOwnerPlayer(ownerPlayer);
         table.setOwnerGuildId(ownerGuildId);
+        table.setOwnerGuildIncarnation(ownerGuildIncarnation);
         table.setAutoDealer(autoDealer);
         table.setStaffMint(staffMint);
         table.setMinBet(minBet);
@@ -90,7 +93,16 @@ public final class TableHouse {
     }
 
     public void setOwnerGuildId(String ownerGuildId) {
+        if (!java.util.Objects.equals(this.ownerGuildId, ownerGuildId)) ownerGuildIncarnation = null;
         this.ownerGuildId = ownerGuildId;
+    }
+
+    public UUID ownerGuildIncarnation() {
+        return ownerGuildIncarnation;
+    }
+
+    public void setOwnerGuildIncarnation(UUID incarnation) {
+        this.ownerGuildIncarnation = incarnation;
     }
 
     public boolean autoDealer() {

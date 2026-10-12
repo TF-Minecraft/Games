@@ -1,12 +1,13 @@
 package net.tfminecraft.games.guild;
 
+import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
 import net.tfminecraft.simplefactions.guild.Guild;
 import net.tfminecraft.simplefactions.managers.FactionManager;
-import net.tfminecraft.simplefactions.objects.Bank;
+import net.tfminecraft.simplefactions.api.SimpleFactionsApi;
 import net.tfminecraft.simplefactions.enums.GuildModifier;
 import net.tfminecraft.games.Games;
 import net.tfminecraft.games.Messages;
@@ -53,7 +54,7 @@ public final class GuildTables {
             if (!sfReady()) {
                 return null;
             }
-            Guild guild = FactionManager.getGuildByMember(player.getName());
+            Guild guild = FactionManager.getGuildByMember(player);
             if (guild == null) {
                 return null;
             }
@@ -100,8 +101,10 @@ public final class GuildTables {
 
     public static int count(String guildId) {
         int n = 0;
+        UUID current = incarnation(guildId);
         for (Table table : TableManager.get().tables()) {
-            if (counts(table) && guildId.equals(table.ownerGuildId())) {
+            if (counts(table) && guildId.equals(table.ownerGuildId())
+                    && current != null && current.equals(table.ownerGuildIncarnation())) {
                 n++;
             }
         }
@@ -117,10 +120,12 @@ public final class GuildTables {
     }
 
     public static boolean frozen(Table table) {
-        return counts(table) && overCap(table.ownerGuildId());
+        return counts(table) && (!owns(table.ownerGuildId(), table.ownerGuildIncarnation())
+                || overCap(table.ownerGuildId()));
     }
 
     public static boolean canStartGuildAutoRound(Table table) {
+        if (counts(table) && !owns(table.ownerGuildId(), table.ownerGuildIncarnation())) return false;
         if (table.live()) {
             return true;
         }
@@ -145,7 +150,9 @@ public final class GuildTables {
         if (id == null) {
             return "place.no_guild";
         }
-        if (!isLeader(id, player)) {
+        if (existing == null && house.ownerGuildIncarnation() == null)
+            house.setOwnerGuildIncarnation(incarnation(id));
+        if (!owns(id, house.ownerGuildIncarnation()) || !isLeader(id, player)) {
             return "place.not_leader";
         }
         if (existing != null && counts(existing)) {
@@ -174,6 +181,7 @@ public final class GuildTables {
         }
         if (house.ownerGuildId() == null || house.ownerGuildId().isBlank()) {
             house.setOwnerGuildId(guildId(player));
+            house.setOwnerGuildIncarnation(incarnation(house.ownerGuildId()));
         }
     }
 
@@ -186,7 +194,7 @@ public final class GuildTables {
         }
         String guildId = table.ownerGuildId();
         if (guildId != null && !guildId.isBlank()) {
-            return isMember(guildId, player);
+            return owns(guildId, table.ownerGuildIncarnation()) && isMember(guildId, player);
         }
         return table.ownerPlayer() != null && table.ownerPlayer().equals(player.getUniqueId());
     }
@@ -194,7 +202,31 @@ public final class GuildTables {
     /** True for the leader of the guild that owns this table, who is the one who may place and remove it. */
     public static boolean leadsOwner(Table table, Player player) {
         String guildId = table.ownerGuildId();
-        return guildId != null && !guildId.isBlank() && isLeader(guildId, player);
+        return owns(guildId, table.ownerGuildIncarnation()) && isLeader(guildId, player);
+    }
+
+    public static UUID incarnation(String guildId) {
+        if (guildId == null || guildId.isBlank()) return null;
+        try {
+            Guild guild = guild(guildId);
+            return guild == null ? null : guild.getIncarnationId();
+        } catch (RuntimeException | LinkageError ex) {
+            warn(ex);
+            return null;
+        }
+    }
+
+    public static boolean owns(String guildId, UUID incarnation) {
+        return incarnation != null && incarnation.equals(incarnation(guildId));
+    }
+
+    public static boolean ready() {
+        try {
+            return sfReady();
+        } catch (RuntimeException | LinkageError ex) {
+            warn(ex);
+            return false;
+        }
     }
 
     private static boolean isMember(String guildId, Player player) {
@@ -213,8 +245,7 @@ public final class GuildTables {
             if (guild == null) {
                 return false;
             }
-            String leader = guild.getLeader();
-            return leader != null && leader.equalsIgnoreCase(player.getName());
+            return guild.isLeader(player);
         } catch (RuntimeException | LinkageError ex) {
             warn(ex);
             return false;
@@ -233,13 +264,13 @@ public final class GuildTables {
 
     private static boolean sfReady() {
         Plugin plugin = Bukkit.getPluginManager().getPlugin("SimpleFactions");
-        return plugin != null && plugin.isEnabled();
+        return plugin != null && plugin.isEnabled() && SimpleFactionsApi.ready();
     }
 
     private static void warn(Throwable ex) {
         if (!loggedFail) {
             loggedFail = true;
-            Games.plugin.getLogger().warning("[Games] SimpleFactions guild tables skipped: " + ex.getMessage());
+            if (Games.plugin != null) Games.plugin.getLogger().warning("[Games] SimpleFactions guild tables skipped: " + ex.getMessage());
         }
     }
 }

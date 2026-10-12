@@ -85,6 +85,7 @@ class MoneyTxTest {
         when(source.available()).thenReturn(10);
         assertEquals(TxResult.Reason.NO_CHANGE, tx().move(source, destination, 5).commit().reason());
         PlayerAccount player = mock(PlayerAccount.class);
+        when(player.character()).thenReturn(new net.tfminecraft.tlibs.character.CharacterRef(UUID.randomUUID(), UUID.randomUUID()));
         assertEquals(TxResult.Reason.PLAYER_SHORT, tx().move(player, destination, 5).commit().reason());
         when(player.available()).thenReturn(10);
         assertEquals(TxResult.Reason.NO_CHANGE, tx().move(player, destination, 5).commit().reason());

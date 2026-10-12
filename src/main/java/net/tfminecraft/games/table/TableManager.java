@@ -272,24 +272,47 @@ public final class TableManager implements Listener, WagerHost {
         player.sendMessage(Messages.get(requireDeck ? "place.armed" : "place.armed_admin"));
     }
 
-    public void loadAll() {
+    public void loadAll() { loadTables(false); }
+
+    public void loadDeferred() { loadTables(true); }
+
+    private void loadTables(boolean onlyMissing) {
         File folder = tablesFolder();
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
         if (files == null) {
             return;
         }
         for (File file : files) {
+            try {
+                if (onlyMissing) {
+                    try {
+                        UUID fileId = UUID.fromString(file.getName().replace(".json", ""));
+                        if (tables.containsKey(fileId)) continue;
+                    } catch (IllegalArgumentException ignored) { /* Older/imported files may have another filename. */ }
+                }
+                if (!net.tfminecraft.games.guild.GuildTableMigration.prepare(file.toPath(),
+                        new File(Games.plugin.getDataFolder(), "migrations/guild-tables").toPath())) continue;
+            } catch (IOException | RuntimeException ex) {
+                Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex);
+                continue;
+            }
             try (FileReader reader = new FileReader(file, StandardCharsets.UTF_8)) {
                 TableData data = GSON.fromJson(reader, TableData.class);
                 if (data == null || data.id == null) {
                     continue;
                 }
+                if (onlyMissing && tables.containsKey(playerId(data.id))) continue;
                 List<Stake> unowned = new ArrayList<>();
                 Table table = fromData(data, unowned);
                 if (table == null) {
                     continue;
                 }
                 tables.put(table.getId(), table);
+                if (net.tfminecraft.games.wager.WagerJournal.blocked(table)) {
+                    table.setMoneyBlocked(true);
+                    Games.plugin.getLogger().severe("[Games] Interrupted money operation freezes table " + table.getId());
+                    continue;
+                }
                 migrateLegacyPiles(table, data, unowned);
                 int unownedDenars = unowned.stream().mapToInt(Stake::value).sum();
                 LedgerAudit.checkLoaded(table, storedDenars(data), unownedDenars);
@@ -330,6 +353,7 @@ public final class TableManager implements Listener, WagerHost {
      * End the session, settle money, muck cards, full idle deck. Table file stays.
      */
     private void resetTableToIdle(Table table, Location dropAt) {
+        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return;
         cancelVote(table, null);
         cancelLootArmsForTable(table.getId());
         table.bumpRecycleGen();
@@ -350,7 +374,9 @@ public final class TableManager implements Listener, WagerHost {
             // being dropped at an empty table on shutdown.
             settleAbsentFloat(table);
         }
+        if (moneyBlocked(table)) return;
         clearFeltNow(table);
+        if (moneyBlocked(table)) return;
         table.actives().clear();
         table.setDealerId(null);
         table.setStreet(1);
@@ -725,12 +751,15 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void pickup(Player player, Table table) {
+        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return;
         cancelVote(table, "wager.cancelled");
         table.bumpRecycleGen();
         cancelLootArmsForTable(table.getId());
         Location dropAt = table.getOrigin().clone();
         settleAutoTray(table, dropAt);
+        if (moneyBlocked(table)) return;
         clearFeltNow(table);
+        if (moneyBlocked(table)) return;
         returnAllHands(table, false, false);
         table.actives().clear();
         table.clearSession();
@@ -1587,11 +1616,23 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void beginSession(Table table) {
+        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table) || !net.tfminecraft.denareconomy.api.Denars.taxReady()) return;
         if (table.live()) {
             return;
         }
         if (!GuildTables.canStartGuildAutoRound(table)) {
             return;
+        }
+        java.util.Set<UUID> participants = new java.util.LinkedHashSet<>(table.actives());
+        if (table.dealerId() != null) participants.add(table.dealerId());
+        for (UUID owner : participants) {
+            Player active = Bukkit.getPlayer(owner);
+            var captured = table.wagerCharacters().get(owner);
+            var current = active == null ? null : net.tfminecraft.tlibs.character.Characters.currentSession(active)
+                    .map(session -> session.ref()).orElse(null);
+            if (current == null && captured == null) return;
+            if (current != null && captured != null && !current.equals(captured)) return;
+            if (current != null) table.wagerCharacters().putIfAbsent(owner, current);
         }
         table.startSession();
         Game game = gameOf(table);
@@ -1756,6 +1797,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void endSession(Table table) {
+        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return;
         table.clearSession();
         checkFeltEmpty(table, "session end");
         despawnTablePiles(table);
@@ -1809,9 +1851,11 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public boolean canEditHouse(Player player, Table table) {
+        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return false;
         if (player.hasPermission(TableHouse.STAFF_PERM) || player.hasPermission("games.admin")) {
             return true;
         }
+        if (GuildTables.counts(table)) return GuildTables.leadsOwner(table, player);
         UUID owner = table.ownerPlayer();
         return owner != null && owner.equals(player.getUniqueId());
     }
@@ -1867,8 +1911,10 @@ public final class TableManager implements Listener, WagerHost {
 
     public void applyHouse(Table table, TableHouse house) {
         String wasGuild = table.ownerGuildId();
+        UUID wasIncarnation = table.ownerGuildIncarnation();
         house.apply(table);
-        if (!Objects.equals(wasGuild, table.ownerGuildId())) {
+        if (!Objects.equals(wasGuild, table.ownerGuildId())
+                || !Objects.equals(wasIncarnation, table.ownerGuildIncarnation())) {
             // A float belongs to the guild that put it up, so it cannot follow the table to a new
             // owner and shelter their winnings from tax.
             table.setHouseFloat(0);
@@ -1904,6 +1950,13 @@ public final class TableManager implements Listener, WagerHost {
         table.setFloatOwner(playerId(data.floatOwner));
         table.setDeckConsumed(!Boolean.FALSE.equals(data.deckConsumed));
         table.setOwnerGuildId(data.ownerGuildId);
+        table.setOwnerGuildIncarnation(playerId(data.ownerGuildIncarnation));
+        if (data.wagerCharacters != null) data.wagerCharacters.forEach((owner, character) -> {
+            UUID ownerId = playerId(owner);
+            UUID characterId = playerId(character);
+            if (ownerId != null && characterId != null) table.wagerCharacters().put(ownerId,
+                    new net.tfminecraft.tlibs.character.CharacterRef(ownerId, characterId));
+        });
         table.setHouseFloat(data.houseFloat != null ? data.houseFloat : 0);
         if (data.autoDealer == null) {
             boolean yaml = layout != null && layout.autoDealer();
@@ -3071,9 +3124,19 @@ public final class TableManager implements Listener, WagerHost {
      * Empty the tray. Bank money the house put there, give a human dealer their own float back,
      * and delete a staff mint float.
      */
+    private static boolean moneyBlocked(Table table) {
+        return table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table);
+    }
+
     private void settleAutoTray(Table table, Location dropAt) {
         UUID house = table.getId();
         if (table.ledger().total(house) < 1) {
+            return;
+        }
+        if (GuildTables.counts(table) && (!GuildTables.owns(table.ownerGuildId(), table.ownerGuildIncarnation())
+                || !net.tfminecraft.denareconomy.api.Denars.taxReady())) {
+            net.tfminecraft.games.wager.WagerJournal.quarantine(table, "Unresolved guild tray settlement: guild="
+                    + table.ownerGuildId() + ", incarnation=" + table.ownerGuildIncarnation() + ", value=" + trayDenars(table));
             return;
         }
         MoneyAccount tray = Accounts.tray(table);
@@ -3082,13 +3145,18 @@ public final class TableManager implements Listener, WagerHost {
         if (!GuildTables.houseBacked(table)) {
             // Nothing behind this table but its dealer, so the float they stocked goes back to them.
             Player dealer = table.dealerId() != null ? Bukkit.getPlayer(table.dealerId()) : null;
-            to = Accounts.payee(table, dealer, house);
+            to = dealer == null ? Accounts.ground(table, dropAt) : Accounts.payee(table, dealer, dealer.getUniqueId());
             reason = "dealer float returned";
         } else {
             to = Accounts.house(table);
             reason = "tray settled";
         }
         TxResult result = wager().begin(table, reason).moveAll(tray, to).commit();
+        if (!result.ok() && GuildTables.counts(table)) {
+            net.tfminecraft.games.wager.WagerJournal.quarantine(table, "Unpaid guild tray settlement: guild="
+                    + table.ownerGuildIncarnation() + ", value=" + trayDenars(table));
+            return;
+        }
         if (!result.ok() || result.moved() < 1) {
             // Nowhere to bank it, so it goes back out as coins rather than being lost.
             wager().begin(table, "tray dropped, no guild bank")
@@ -3127,10 +3195,10 @@ public final class TableManager implements Listener, WagerHost {
 
     /** The whole tray to one player who is online, and nobody owed it any more. */
     private void payTray(Table table, Player to) {
-        table.setFloatOwner(null);
-        wager().begin(table, "dealer float returned")
+        TxResult paid = wager().begin(table, "dealer float returned")
                 .moveAll(Accounts.tray(table), Accounts.payee(table, to, to.getUniqueId()))
                 .commit();
+        if (paid.ok() && trayDenars(table) == 0) table.setFloatOwner(null);
         wager().forget(table, table.getId());
         save(table);
     }
@@ -4369,11 +4437,15 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
+    public void saveWager(Table table) throws IOException {
+        net.tfminecraft.games.persistence.DurableFiles.write(tableFile(table.getId()).toPath(), GSON.toJson(toData(table)));
+    }
+
     private void save(Table table) {
         File file = tableFile(table.getId());
         TableData data = toData(table);
-        try (FileWriter writer = new FileWriter(file, StandardCharsets.UTF_8)) {
-            GSON.toJson(data, writer);
+        try {
+            net.tfminecraft.games.persistence.DurableFiles.write(file.toPath(), GSON.toJson(data));
         } catch (IOException ex) {
             Games.plugin.getLogger().warning("[Games] Failed to save table " + table.getId() + ": " + ex.getMessage());
         }
@@ -4427,6 +4499,10 @@ public final class TableManager implements Listener, WagerHost {
         }
         data.ownerPlayer = table.ownerPlayer() != null ? table.ownerPlayer().toString() : null;
         data.ownerGuildId = table.ownerGuildId();
+        data.ownerGuildIncarnation = table.ownerGuildIncarnation() == null ? null : table.ownerGuildIncarnation().toString();
+        data.ownerGuildMigrated = true;
+        data.wagerCharacters = new HashMap<>();
+        table.wagerCharacters().forEach((owner, character) -> data.wagerCharacters.put(owner.toString(), character.characterId().toString()));
         data.autoDealer = table.autoDealer();
         data.staffMint = table.staffMint();
         data.houseFloat = table.houseFloat();
@@ -4702,6 +4778,9 @@ public final class TableManager implements Listener, WagerHost {
         List<PileData> piles = new ArrayList<>();
         String ownerPlayer;
         String ownerGuildId;
+        String ownerGuildIncarnation;
+        Boolean ownerGuildMigrated;
+        Map<String, String> wagerCharacters;
         Boolean autoDealer;
         Boolean staffMint;
         /** Bank money still out on the felt. Absent on files written before profits were taxed. */

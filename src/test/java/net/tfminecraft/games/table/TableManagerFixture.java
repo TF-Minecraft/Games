@@ -62,6 +62,7 @@ abstract class TableManagerFixture {
     DisplayManager display;
     Game game;
     ItemAPI items;
+    MockedStatic<net.tfminecraft.denareconomy.api.Denars> denars;
     MockedStatic<TLibs> libs;
     MockedStatic<CardLoader> cards;
     MockedStatic<DisplayManager> displays;
@@ -123,6 +124,15 @@ abstract class TableManagerFixture {
         MockBukkit.getMock().addWorld(world);
         player = MockBukkit.getMock().addPlayer();
         player.teleport(new Location(world, 0, 65, 0, 90, 0));
+        track(net.tfminecraft.games.support.TestCharacters.mockSessions());
+        denars = track(mockStatic(net.tfminecraft.denareconomy.api.Denars.class));
+        denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(true);
+        denars.when(net.tfminecraft.denareconomy.api.Denars::ready).thenReturn(true);
+        denars.when(() -> net.tfminecraft.denareconomy.api.Denars.guild(any())).thenCallRealMethod();
+        denars.when(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), anyList()))
+                .thenReturn(net.tfminecraft.denareconomy.api.Result.APPLIED);
+        var factionsReady = track(mockStatic(net.tfminecraft.simplefactions.api.SimpleFactionsApi.class));
+        factionsReady.when(net.tfminecraft.simplefactions.api.SimpleFactionsApi::ready).thenReturn(true);
         libs = track(mockStatic(TLibs.class));
         items = mock(ItemAPI.class, RETURNS_DEEP_STUBS);
         libs.when(TLibs::getItemAPI).thenReturn(items);

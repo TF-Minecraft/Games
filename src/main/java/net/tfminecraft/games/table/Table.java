@@ -60,7 +60,15 @@ public final class Table {
     private int maxBet;
     private int autoCountdown;
     private UUID ownerPlayer;
+    private boolean moneyBlocked;
+    private final java.util.Map<UUID, net.tfminecraft.tlibs.character.CharacterRef> wagerCharacters = new java.util.HashMap<>();
+
+    public boolean moneyBlocked() { return moneyBlocked; }
+    public void setMoneyBlocked(boolean blocked) { moneyBlocked = blocked; }
+    public java.util.Map<UUID, net.tfminecraft.tlibs.character.CharacterRef> wagerCharacters() { return wagerCharacters; }
+
     private String ownerGuildId;
+    private UUID ownerGuildIncarnation;
     private boolean autoDealer;
     private boolean staffMint;
     private int houseFloat;
@@ -373,7 +381,16 @@ public final class Table {
     }
 
     public void setOwnerGuildId(String ownerGuildId) {
+        if (!java.util.Objects.equals(this.ownerGuildId, ownerGuildId)) ownerGuildIncarnation = null;
         this.ownerGuildId = ownerGuildId;
+    }
+
+    public UUID ownerGuildIncarnation() {
+        return ownerGuildIncarnation;
+    }
+
+    public void setOwnerGuildIncarnation(UUID incarnation) {
+        this.ownerGuildIncarnation = incarnation;
     }
 
     public boolean autoDealer() {
@@ -481,6 +498,7 @@ public final class Table {
     }
 
     public void clearSession() {
+        if (moneyBlocked || net.tfminecraft.games.wager.WagerJournal.blocked(this)) return;
         live = false;
         actor = null;
         phase = null;
@@ -489,5 +507,7 @@ public final class Table {
         handIndex = 0;
         autoCountdown = 0;
         if (!poker.enabled() || !poker.occupied()) roundMoney.clear();
+        wagerCharacters.entrySet().removeIf(entry -> ledger.total(entry.getKey()) == 0
+                && !(ledger.total(id) > 0 && (entry.getKey().equals(dealerId) || entry.getKey().equals(floatOwner))));
     }
 }

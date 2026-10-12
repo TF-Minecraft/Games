@@ -187,24 +187,29 @@ class TableManagerWagerTest extends TableManagerFixture {
         when(plugin.isEnabled()).thenReturn(true);
         when(plugins.getPlugin("SimpleFactions")).thenReturn(plugin);
         Guild guild = mock(Guild.class);
+        table.setOwnerGuildIncarnation(UUID.randomUUID());
+        when(guild.getIncarnationId()).thenReturn(table.ownerGuildIncarnation());
         Bank bank = mock(Bank.class);
         Ledger ledger = mock(Ledger.class);
         when(guild.getBank()).thenReturn(bank);
         when(guild.getLedger()).thenReturn(ledger);
+        when(ledger.addCasinoProfitEntry(anyString(), eq(3.0))).thenReturn(true);
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
                 MockedStatic<FactionManager> factions = mockStatic(FactionManager.class)) {
             bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
             factions.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
             manager.bankAutoTray(table);
         }
-        verify(bank).deposit(8.0);
-        verify(ledger).addCasinoProfitEntry(3.0);
+        verifyNoInteractions(bank);
+        denars.verify(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), argThat(legs ->
+                legs.stream().anyMatch(leg -> leg.account().equals("guild:" + table.ownerGuildIncarnation()) && leg.cents() == 800))));
+        verify(ledger).addCasinoProfitEntry(startsWith("games:" + table.getId()), eq(3.0));
         assertEquals(0, table.houseFloat());
         assertTrue(table.ledger().isEmpty());
         assertTrue(table.getPiles().isEmpty());
     }
 
-    @Test void missingGuildBankDropsTrayCoinsAtTableInsteadOfDeletingThem() {
+    @Test void missingGuildIncarnationRetainsTrayForReview() {
         Table table = place(false);
         table.setOwnerGuildId("deleted-guild");
         table.setHouseFloat(5);
@@ -213,8 +218,10 @@ class TableManagerWagerTest extends TableManagerFixture {
         int dropped = world.getEntitiesByClass(Item.class).stream()
                 .filter(item -> item.getItemStack().getType() == Material.GOLD_NUGGET)
                 .mapToInt(item -> item.getItemStack().getAmount()).sum();
-        assertEquals(5, dropped);
-        assertTrue(table.ledger().isEmpty());
+        assertEquals(0, dropped);
+        assertEquals(5, table.ledger().total());
+        assertTrue(table.moneyBlocked());
+        assertTrue(net.tfminecraft.games.wager.WagerJournal.blocked(table));
         assertEquals(5, table.houseFloat(), "A refused bank transfer cannot retire its float");
     }
 
@@ -315,5 +322,16 @@ class TableManagerWagerTest extends TableManagerFixture {
         assertEquals(1, table.street());
         assertSame(table, manager.table(table.getId()));
         verify(game).onTableRemoved(table);
+    }
+
+    @Test void newRoundWaitsForTaxReadinessWithoutCreatingAnIntent() {
+        Table table = place(false);
+        denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(false);
+        manager.beginSession(table);
+        assertFalse(table.live());
+        assertFalse(net.tfminecraft.games.wager.WagerJournal.blocked(table));
+        denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(true);
+        manager.beginSession(table);
+        assertTrue(table.live());
     }
 }

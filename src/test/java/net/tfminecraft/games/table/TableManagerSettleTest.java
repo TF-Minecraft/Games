@@ -65,7 +65,7 @@ class TableManagerSettleTest extends TableManagerFixture {
         manager.onHitEntity(hit);
     }
 
-    @Test void aGuildBankThatFailsMidDepositGetsTheTrayCoinsDroppedAtTheTableInstead() {
+    @Test void aRefusedGuildPostingRetainsTrayFloatAndTableForReview() {
         Table table = place(false);
         table.setOwnerGuildId("guild");
         table.setHouseFloat(5);
@@ -76,17 +76,25 @@ class TableManagerSettleTest extends TableManagerFixture {
         when(factions.isEnabled()).thenReturn(true);
         when(plugins.getPlugin("SimpleFactions")).thenReturn(factions);
         Guild guild = mock(Guild.class);
+        table.setOwnerGuildIncarnation(java.util.UUID.randomUUID());
+        when(guild.getIncarnationId()).thenReturn(table.ownerGuildIncarnation());
         Bank bank = mock(Bank.class);
         when(guild.getBank()).thenReturn(bank);
-        doThrow(new IllegalStateException("bank storage offline")).when(bank).deposit(anyDouble());
+        denars.when(() -> net.tfminecraft.denareconomy.api.Denars.post(anyString(), anyString(), anyList()))
+                .thenReturn(net.tfminecraft.denareconomy.api.Result.REFUSED);
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
                 MockedStatic<FactionManager> registry = mockStatic(FactionManager.class)) {
             bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
             registry.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
             manager.bankAutoTray(table);
         }
-        assertEquals(5, dropped(), "the coins survive a bank that took nothing");
-        assertTrue(table.ledger().isEmpty());
+        assertEquals(0, dropped(), "Ledger refusal must not cause item delivery through a fallback");
+        assertEquals(5, table.ledger().total());
+        assertTrue(table.moneyBlocked());
+        player.addAttachment(net.tfminecraft.games.Games.plugin, "games.admin", true);
+        pickUp(table, player);
+        assertSame(table, manager.table(table.getId()));
+        verifyNoInteractions(bank);
         assertEquals(5, table.houseFloat(), "nothing reached the bank, so the float is still owed");
     }
 
@@ -121,6 +129,8 @@ class TableManagerSettleTest extends TableManagerFixture {
         when(factions.isEnabled()).thenReturn(true);
         when(plugins.getPlugin("SimpleFactions")).thenReturn(factions);
         Guild guild = mock(Guild.class);
+        table.setOwnerGuildIncarnation(java.util.UUID.randomUUID());
+        when(guild.getIncarnationId()).thenReturn(table.ownerGuildIncarnation());
         when(guild.getModifier(GuildModifier.AUTO_DEALER_TABLES)).thenReturn(2.0);
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
                 MockedStatic<FactionManager> registry = mockStatic(FactionManager.class)) {

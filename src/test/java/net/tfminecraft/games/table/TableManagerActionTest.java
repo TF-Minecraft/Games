@@ -431,12 +431,13 @@ class TableManagerActionTest extends TableManagerFixture {
         when(plugins.getPlugin("SimpleFactions")).thenReturn(integration);
         Guild guild = mock(Guild.class);
         when(guild.getId()).thenReturn("card-guild");
-        when(guild.getLeader()).thenReturn(player.getName());
+        when(guild.isLeader(player)).thenReturn(true);
+        when(guild.getIncarnationId()).thenReturn(UUID.randomUUID());
         when(guild.getModifier(GuildModifier.AUTO_DEALER_TABLES)).thenReturn(1.0);
         try (var bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
                 var factions = mockStatic(FactionManager.class)) {
             bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
-            factions.when(() -> FactionManager.getGuildByMember(player.getName())).thenReturn(guild);
+            factions.when(() -> FactionManager.getGuildByMember(player)).thenReturn(guild);
             factions.when(() -> FactionManager.getGuildByString("card-guild")).thenReturn(guild);
             player.getInventory().setItemInMainHand(new ItemStack(Material.PAPER, 2));
             manager.selectGame(player, "blackjack", player.getLocation(), true);
