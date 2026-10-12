@@ -18,6 +18,7 @@ public final class DurableFiles {
     }
 
     public static void write(Path target, byte[] bytes) throws IOException {
+        target = target.toAbsolutePath();
         Files.createDirectories(target.getParent());
         Path temp = Files.createTempFile(target.getParent(), ".pending-", ".tmp");
         try {
@@ -27,7 +28,8 @@ public final class DurableFiles {
                 channel.force(true);
             }
             Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            sync(target.getParent());
+            // Parent entries also need flushing when an intent creates its first directory.
+            for (Path directory = target.getParent(); directory != null; directory = directory.getParent()) sync(directory);
         } finally {
             Files.deleteIfExists(temp);
         }
