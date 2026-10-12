@@ -639,6 +639,34 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         assertEquals(0, inventoryGold());
     }
 
+    @Test void deferredPassesSkipUnchangedUnloadableFilesUntilTheyAreFixed() throws Exception {
+        Files.createDirectories(folder());
+        Files.writeString(folder().resolve("broken.json"), "{\"id\":");
+        JsonObject invalid = document(UUID.randomUUID());
+        invalid.addProperty("id", "not-a-uuid");
+        write("invalid-id.json", invalid);
+        manager.loadDeferred();
+        manager.loadDeferred();
+        verify(Games.plugin.getLogger(), times(1)).warning(contains("Failed to load table broken.json"));
+        verify(Games.plugin.getLogger(), times(1)).warning(contains("invalid-id.json"));
+        assertTrue(manager.tables().isEmpty());
+        UUID fixed = UUID.randomUUID();
+        write("broken.json", document(fixed));
+        manager.loadDeferred();
+        assertNotNull(manager.table(fixed), "a repaired file is picked up on the next deferred pass");
+    }
+
+    @Test void deferredPassesKeepRetryingTablesWhoseWorldIsMissing() throws Exception {
+        UUID id = UUID.randomUUID();
+        JsonObject saved = document(id);
+        saved.addProperty("world", "unloaded-world");
+        write(id + ".json", saved);
+        manager.loadDeferred();
+        manager.loadDeferred();
+        verify(Games.plugin.getLogger(), times(2)).warning(contains("Table world missing: unloaded-world"));
+        assertNull(manager.table(id));
+    }
+
     @Test void deferredLoadingDoesNotReplaceAnActiveTableStoredUnderAnImportedFilename() throws Exception {
         UUID id = UUID.randomUUID();
         write("imported.json", document(id));

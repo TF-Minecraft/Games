@@ -122,6 +122,8 @@ public final class TableManager implements Listener, WagerHost {
     private static final long INSPECT_TICKS = 5L;
 
     private final Map<UUID, Table> tables = new HashMap<>();
+    /** Files that failed to parse, by name and content signature, so deferred passes skip them until fixed. */
+    private final Map<String, String> unloadableFiles = new HashMap<>();
     /** Table id to owner to floating amount label, only used when chips are hidden. */
     private final Map<UUID, Map<UUID, UUID>> bucketLabels = new HashMap<>();
     private final Map<UUID, PlaceArm> arms = new HashMap<>();
@@ -285,6 +287,7 @@ public final class TableManager implements Listener, WagerHost {
         for (File file : files) {
             try {
                 if (onlyMissing) {
+                    if (knownUnloadable(file)) continue;
                     try {
                         UUID fileId = UUID.fromString(file.getName().replace(".json", ""));
                         if (tables.containsKey(fileId)) continue;
@@ -292,22 +295,30 @@ public final class TableManager implements Listener, WagerHost {
                 }
                 if (!net.tfminecraft.games.guild.GuildTableMigration.prepare(file.toPath(),
                         new File(Games.plugin.getDataFolder(), "migrations/guild-tables").toPath())) continue;
-            } catch (IOException | RuntimeException ex) {
+            } catch (RuntimeException ex) {
+                // The file's shape is the problem; do not re-read it every pass until it changes.
+                markUnloadable(file);
+                Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex);
+                continue;
+            } catch (IOException ex) {
                 Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex);
                 continue;
             }
             try (FileReader reader = new FileReader(file, StandardCharsets.UTF_8)) {
                 TableData data = GSON.fromJson(reader, TableData.class);
                 if (data == null || data.id == null) {
+                    markUnloadable(file);
                     continue;
                 }
                 if (onlyMissing && tables.containsKey(playerId(data.id))) continue;
                 List<Stake> unowned = new ArrayList<>();
                 Table table = fromData(data, unowned);
                 if (table == null) {
+                    // A missing world or card set can arrive later, so this stays retryable.
                     continue;
                 }
                 tables.put(table.getId(), table);
+                unloadableFiles.remove(file.getName());
                 if (net.tfminecraft.games.wager.WagerJournal.blocked(table)) {
                     table.setMoneyBlocked(true);
                     Games.plugin.getLogger().severe("[Games] Interrupted money operation freezes table " + table.getId());
@@ -333,13 +344,28 @@ public final class TableManager implements Listener, WagerHost {
                     Games.plugin.getLogger().warning("[Games] Failed to spawn loaded table "
                             + file.getName() + ": " + ex.getMessage());
                 }
-            } catch (IOException | JsonParseException ex) {
+            } catch (JsonParseException ex) {
+                markUnloadable(file);
+                Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex.getMessage());
+            } catch (IOException ex) {
                 Games.plugin.getLogger().warning("[Games] Failed to load table " + file.getName() + ": " + ex.getMessage());
             }
         }
         if (Cache.debug) {
             Games.plugin.getLogger().info("[Games] Debug: loaded tables=" + tables.size());
         }
+    }
+
+    private static String fileSignature(File file) {
+        return file.lastModified() + ":" + file.length();
+    }
+
+    private boolean knownUnloadable(File file) {
+        return fileSignature(file).equals(unloadableFiles.get(file.getName()));
+    }
+
+    private void markUnloadable(File file) {
+        unloadableFiles.put(file.getName(), fileSignature(file));
     }
 
     public void despawnWorldAll() {
