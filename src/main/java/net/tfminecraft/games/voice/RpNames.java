@@ -4,10 +4,9 @@ import java.util.UUID;
 
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
 
-import net.tfminecraft.rpcharacters.identity.DisplayIdentityService;
 import net.tfminecraft.games.Games;
+import net.tfminecraft.tlibs.character.Characters;
 
 /**
  * Active RP character display name. Isolated so table labels do not import RPC.
@@ -36,21 +35,13 @@ public final class RpNames {
     }
 
     private static String characterDisplay(Player player) {
-        Plugin rpc = Bukkit.getPluginManager().getPlugin("RPCharacters");
-        if (rpc == null || !rpc.isEnabled()) {
-            return null;
-        }
         try {
-            String name = DisplayIdentityService.resolveCharacterName(player);
-            if (name == null || name.isBlank()) {
-                return null;
-            }
-            String display = DisplayIdentityService.resolveDisplay(player);
-            return display != null && !display.isBlank() ? display : name;
+            String display = Characters.displayName(player);
+            return !display.isBlank() ? display : null;
         } catch (RuntimeException | LinkageError ex) {
             if (!loggedFail) {
                 loggedFail = true;
-                Games.plugin.getLogger().warning("[Games] RPCharacters names skipped: " + ex.getMessage());
+                Games.plugin.getLogger().warning("[Games] Shared character names skipped: " + ex.getMessage());
             }
             return null;
         }

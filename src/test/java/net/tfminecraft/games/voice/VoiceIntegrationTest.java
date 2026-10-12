@@ -10,6 +10,7 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.plugin.ServicesManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,7 @@ import net.tfminecraft.games.layout.TableLayout;
 import net.tfminecraft.games.layout.TableLayout.VoiceLines;
 import net.tfminecraft.rpcharacters.chat.ChatChannel;
 import net.tfminecraft.rpcharacters.chat.ChatManager;
-import net.tfminecraft.rpcharacters.identity.DisplayIdentityService;
+import net.tfminecraft.tlibs.character.CharacterIdentity;
 import net.tfminecraft.rpcharacters.loaders.ChatLoader;
 import net.tfminecraft.rpcharacters.managers.PlayerManager;
 import net.tfminecraft.rpcharacters.objects.PlayerData;
@@ -26,7 +27,8 @@ import net.tfminecraft.rpcharacters.objects.RPCharacter;
 
 class VoiceIntegrationTest {
     private MockedStatic<Bukkit> bukkit;
-    private MockedStatic<DisplayIdentityService> identity;
+    private CharacterIdentity identity;
+    private ServicesManager services;
     private MockedStatic<ChatLoader> channels;
     private MockedStatic<PlayerManager> players;
     private MockedStatic<ChatManager> chat;
@@ -58,12 +60,16 @@ class VoiceIntegrationTest {
         when(plugins.getPlugin("RPCharacters")).thenReturn(rpc);
         bukkit = mockStatic(Bukkit.class, CALLS_REAL_METHODS);
         bukkit.when(Bukkit::getPluginManager).thenReturn(plugins);
+        bukkit.when(Bukkit::isPrimaryThread).thenReturn(true);
+        services = mock(ServicesManager.class);
+        identity = mock(CharacterIdentity.class);
+        bukkit.when(Bukkit::getServicesManager).thenReturn(services);
+        when(services.load(CharacterIdentity.class)).thenReturn(identity);
         id = UUID.randomUUID();
         player = mock(Player.class);
         when(player.getUniqueId()).thenReturn(id);
         when(player.getName()).thenReturn("AccountName");
         bukkit.when(() -> Bukkit.getPlayer(id)).thenReturn(player);
-        identity = mockStatic(DisplayIdentityService.class);
         channels = mockStatic(ChatLoader.class);
         players = mockStatic(PlayerManager.class);
         chat = mockStatic(ChatManager.class);
@@ -79,24 +85,40 @@ class VoiceIntegrationTest {
         if (chat != null) chat.close();
         if (players != null) players.close();
         if (channels != null) channels.close();
-        if (identity != null) identity.close();
         if (bukkit != null) bukkit.close();
         net.tfminecraft.games.Games.plugin = previousPlugin;
     }
 
     @Test
-    void namesPreferCharacterDisplayThenCharacterNameThenAccountName() {
-        identity.when(() -> DisplayIdentityService.resolveCharacterName(player)).thenReturn("Character Name");
-        identity.when(() -> DisplayIdentityService.resolveDisplay(player)).thenReturn("The Dealer");
+    void namesUseFreshSharedAliasesWithoutCanonicalCharacterLookups() {
+        when(identity.displayName(player)).thenReturn("The Dealer", "The Merchant", "The Dealer");
         assertEquals("The Dealer", RpNames.of(id));
-        identity.when(() -> DisplayIdentityService.resolveDisplay(player)).thenReturn(" ");
-        assertEquals("Character Name", RpNames.of(id));
-        identity.when(() -> DisplayIdentityService.resolveDisplay(player)).thenReturn(null);
-        assertEquals("Character Name", RpNames.of(id));
-        identity.when(() -> DisplayIdentityService.resolveCharacterName(player)).thenReturn(" ");
+        assertEquals("The Merchant", RpNames.of(id));
+        assertEquals("The Dealer", RpNames.of(id));
+        verify(identity, times(3)).displayName(player);
+        verifyNoMoreInteractions(identity);
+        verifyNoInteractions(plugins);
+    }
+
+    @Test
+    void blankOrNullSharedDisplayUsesAccountName() {
+        when(identity.displayName(player)).thenReturn(" ");
         assertEquals("AccountName", RpNames.of(id));
-        identity.when(() -> DisplayIdentityService.resolveCharacterName(player)).thenReturn(null);
+        when(identity.displayName(player)).thenReturn(null);
         assertEquals("AccountName", RpNames.of(id));
+    }
+
+    @Test
+    void namesObserveProviderRegistrationAndRemovalOnEveryCall() {
+        when(services.load(CharacterIdentity.class)).thenReturn(null);
+        assertEquals("AccountName", RpNames.of(id));
+        verifyNoInteractions(identity);
+        when(services.load(CharacterIdentity.class)).thenReturn(identity);
+        when(identity.displayName(player)).thenReturn("The Dealer");
+        assertEquals("The Dealer", RpNames.of(id));
+        when(services.load(CharacterIdentity.class)).thenReturn(null);
+        assertEquals("AccountName", RpNames.of(id));
+        verify(identity).displayName(player);
     }
 
     @Test
@@ -111,17 +133,19 @@ class VoiceIntegrationTest {
         when(offline.getName()).thenReturn(null);
         assertEquals("-", RpNames.of(id));
         assertEquals("-", RpNames.of(null));
+        verifyNoInteractions(services, identity);
     }
 
     @Test
-    void missingOrDisabledRoleplayPluginFallsBackWithoutDispatchingVoice() {
+    void missingOrDisabledRoleplayVoiceDoesNotDisableSharedNames() {
+        when(identity.displayName(player)).thenReturn("The Dealer");
         when(rpc.isEnabled()).thenReturn(false);
-        assertEquals("AccountName", RpNames.of(id));
+        assertEquals("The Dealer", RpNames.of(id));
         RpVoice.say(player, layout(VoiceLines.defaults()), "hit");
         when(plugins.getPlugin("RPCharacters")).thenReturn(null);
-        assertEquals("AccountName", RpNames.of(id));
+        assertEquals("The Dealer", RpNames.of(id));
         RpVoice.say(player, layout(VoiceLines.defaults()), "hit");
-        identity.verifyNoInteractions();
+        verify(identity, times(2)).displayName(player);
         chat.verifyNoInteractions();
     }
 
@@ -162,7 +186,7 @@ class VoiceIntegrationTest {
 
     @Test
     void integrationFailuresFallBackToAccountNameAndDoNotBreakGameplay() {
-        identity.when(() -> DisplayIdentityService.resolveCharacterName(player))
+        when(identity.displayName(player))
                 .thenThrow(new NoClassDefFoundError("incompatible identity API"));
         assertEquals("AccountName", RpNames.of(id));
         chat.when(() -> ChatManager.dispatch(player, channel, "Hit.", true))
@@ -170,8 +194,19 @@ class VoiceIntegrationTest {
         assertDoesNotThrow(() -> RpVoice.say(player, layout(VoiceLines.defaults()), "hit"));
         assertEquals("AccountName", RpNames.of(id));
         assertDoesNotThrow(() -> RpVoice.say(player, layout(VoiceLines.defaults()), "hit"));
-        verify(logger, times(1)).warning("[Games] RPCharacters names skipped: incompatible identity API");
+        verify(logger, times(1)).warning("[Games] Shared character names skipped: incompatible identity API");
         verify(logger, times(1)).warning("[Games] RPCharacters voice skipped: chat unavailable");
+    }
+
+    @Test
+    void sharedNameRuntimeFailuresLogOnceAndLaterSuccessfulCallsRecover() {
+        when(identity.displayName(player)).thenThrow(new IllegalStateException("names unavailable"));
+        assertEquals("AccountName", RpNames.of(id));
+        assertEquals("AccountName", RpNames.of(id));
+        doReturn("Recovered Alias").when(identity).displayName(player);
+        assertEquals("Recovered Alias", RpNames.of(id));
+        verify(logger, times(1)).warning("[Games] Shared character names skipped: names unavailable");
+        verifyNoMoreInteractions(logger);
     }
 
     private static TableLayout layout(VoiceLines voice) {
