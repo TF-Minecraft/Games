@@ -25,9 +25,12 @@ public final class GuildTableMigration {
             // A complete plan is written before the table. Replay the exact incarnation, never resolve again.
             migrated = JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();
         } else {
+            GuildTables.Lookup lookup = GuildTables.resolveIncarnation(data.get("ownerGuildId").getAsString());
+            // A failed lookup is not a deleted guild: stamp nothing and let a later pass retry.
+            if (lookup.failed()) return false;
             if (!Files.exists(backup)) DurableFiles.write(backup, Files.readAllBytes(tableFile));
             migrated = data.deepCopy();
-            UUID incarnation = GuildTables.incarnation(data.get("ownerGuildId").getAsString());
+            UUID incarnation = lookup.incarnation();
             if (incarnation != null) migrated.addProperty("ownerGuildIncarnation", incarnation.toString());
             migrated.addProperty("ownerGuildMigrated", true);
             DurableFiles.write(manifest, migrated.toString());

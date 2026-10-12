@@ -205,15 +205,27 @@ public final class GuildTables {
         return owns(guildId, table.ownerGuildIncarnation()) && isLeader(guildId, player);
     }
 
-    public static UUID incarnation(String guildId) {
-        if (guildId == null || guildId.isBlank()) return null;
+    /** An incarnation lookup that keeps "no such guild" apart from "could not ask". */
+    public record Lookup(UUID incarnation, boolean failed) {}
+
+    public static Lookup resolveIncarnation(String guildId) {
+        if (guildId == null || guildId.isBlank()) return new Lookup(null, false);
         try {
-            Guild guild = guild(guildId);
-            return guild == null ? null : guild.getIncarnationId();
+            if (!sfReady()) return new Lookup(null, true);
+            Guild guild = FactionManager.getGuildByString(guildId);
+            if (guild == null) return new Lookup(null, false);
+            UUID incarnation = guild.getIncarnationId();
+            // A live guild without an incarnation is not proof of deletion; ask again later.
+            return incarnation == null ? new Lookup(null, true) : new Lookup(incarnation, false);
         } catch (RuntimeException | LinkageError ex) {
             warn(ex);
-            return null;
+            return new Lookup(null, true);
         }
+    }
+
+    public static UUID incarnation(String guildId) {
+        Lookup lookup = resolveIncarnation(guildId);
+        return lookup.failed() ? null : lookup.incarnation();
     }
 
     public static boolean owns(String guildId, UUID incarnation) {

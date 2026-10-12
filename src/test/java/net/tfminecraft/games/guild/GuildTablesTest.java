@@ -313,6 +313,29 @@ class GuildTablesTest {
         assertTrue(GuildTables.frozen(table));
     }
 
+    @Test void incarnationLookupSeparatesAbsentGuildsFromFailedLookups() {
+        assertEquals(new GuildTables.Lookup(INCARNATION, false), GuildTables.resolveIncarnation("guild"));
+        assertEquals(new GuildTables.Lookup(null, false), GuildTables.resolveIncarnation("deleted"));
+        assertEquals(new GuildTables.Lookup(null, false), GuildTables.resolveIncarnation(null));
+        assertEquals(new GuildTables.Lookup(null, false), GuildTables.resolveIncarnation(" "));
+        assertNull(GuildTables.incarnation("deleted"));
+
+        when(guild.getIncarnationId()).thenReturn(null);
+        assertTrue(GuildTables.resolveIncarnation("guild").failed(),
+                "a live guild with no incarnation yet is retried, not treated as deleted");
+        when(guild.getIncarnationId()).thenReturn(INCARNATION);
+
+        api.when(SimpleFactionsApi::ready).thenReturn(false);
+        assertTrue(GuildTables.resolveIncarnation("guild").failed(),
+                "factions not ready cannot prove a guild is gone");
+        api.when(SimpleFactionsApi::ready).thenReturn(true);
+
+        factions.when(() -> FactionManager.getGuildByString("guild"))
+                .thenThrow(new IllegalStateException("integration unavailable"));
+        assertTrue(GuildTables.resolveIncarnation("guild").failed());
+        assertNull(GuildTables.incarnation("guild"), "runtime lookups still fail closed");
+    }
+
     @Test void replacementGuildCannotUseOrCountAnOldIncarnationAndAccountNamesGiveNoRights() {
         Table table = table("guild");
         tables.add(table);
