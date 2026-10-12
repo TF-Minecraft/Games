@@ -37,7 +37,7 @@ public final class RpNames {
     private static String characterDisplay(Player player) {
         try {
             String display = Characters.displayName(player);
-            return !display.isBlank() ? display : null;
+            return display != null && !display.isBlank() ? display : null;
         } catch (RuntimeException | LinkageError ex) {
             if (!loggedFail) {
                 loggedFail = true;
