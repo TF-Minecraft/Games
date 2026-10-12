@@ -49,6 +49,8 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.event.server.PluginEnableEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -1818,8 +1820,30 @@ public final class TableManager implements Listener, WagerHost {
         if (guildId == null || guildId.isBlank()) {
             return;
         }
+        refreshIdle(guildId);
+    }
+
+    /**
+     * SimpleFactions and RPCharacters soft depend on each other, so Paper may enable Games before
+     * SimpleFactions. Tables loaded then read every guild cap as zero and stay closed, so ready
+     * every idle table again once the server has loaded, and again if SimpleFactions enables late.
+     */
+    @EventHandler
+    public void onServerLoad(ServerLoadEvent event) {
+        refreshIdle(null);
+    }
+
+    @EventHandler
+    public void onPluginEnable(PluginEnableEvent event) {
+        if ("SimpleFactions".equals(event.getPlugin().getName())) {
+            refreshIdle(null);
+        }
+    }
+
+    /** Ready every idle table again, or only those of {@code guildId} when it is not null. */
+    private void refreshIdle(String guildId) {
         for (Table table : tables.values()) {
-            if (table.live() || !guildId.equals(table.ownerGuildId())) {
+            if (table.live() || (guildId != null && !guildId.equals(table.ownerGuildId()))) {
                 continue;
             }
             Game game = gameOf(table);
