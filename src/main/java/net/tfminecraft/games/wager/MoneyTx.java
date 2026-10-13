@@ -173,7 +173,7 @@ public final class MoneyTx {
         if (table == null || host == null) {
             return TxResult.failed(TxResult.Reason.NO_TABLE, 0, 0);
         }
-        if (table.moneyBlocked() || (WagerJournal.blocked(table) && !WagerJournal.retryable(table)))
+        if (table.ownershipHeld() || table.moneyBlocked() || (WagerJournal.blocked(table) && !WagerJournal.retryable(table)))
             return TxResult.failed(TxResult.Reason.BANK_SHORT, 0, 0);
         if (legs.isEmpty()) {
             return TxResult.nothing();

@@ -186,7 +186,7 @@ class TableManagerStoredDataTest extends TableManagerFixture {
         assertEquals(3, table.ledger().total(), "the money itself is still on the felt");
     }
 
-    @Test void pickingUpATableWhoseFileWasAlreadyRemovedIsQuiet() throws Exception {
+    @Test void missingSourceHoldsPickupWithoutRecreatingOrDestroyingTheRuntimeTable() throws Exception {
         Table table = place(false);
         Files.delete(folder().resolve(table.getId() + ".json"));
         Entity anchor = mock(Entity.class);
@@ -195,7 +195,7 @@ class TableManagerStoredDataTest extends TableManagerFixture {
         when(hit.getEntity()).thenReturn(anchor);
         when(hit.getDamager()).thenReturn(player);
         manager.onHitEntity(hit);
-        assertNull(manager.table(table.getId()));
+        assertSame(table,manager.table(table.getId()));assertTrue(table.ownershipHeld());
         assertFalse(Files.exists(folder().resolve(table.getId() + ".json")));
         verify(Games.plugin.getLogger(), never()).warning(contains("Could not delete"));
     }

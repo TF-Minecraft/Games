@@ -63,6 +63,7 @@ class TableManagerActionTest extends TableManagerFixture {
 
     @Test void blackjackOwnerAndStaffCanOpenOptionsButLiveGameCannotBeEdited() {
         Table table = blackjack();
+        table.setStaffMint(false); // This test exercises private owner editing, separate from staff mint.
         PlayerMock staff = opponent();
         staff.addAttachment(Games.plugin, "games.admin", true);
         player.setSneaking(true);

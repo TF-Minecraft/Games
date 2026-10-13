@@ -50,10 +50,13 @@ class TableOptionsGuiTest {
     private MockedStatic<TableManager> managers;
     private MockedStatic<GuildTables> guilds;
 
+    private org.mockito.MockedStatic<net.tfminecraft.tlibs.character.Characters> characters;
+
     @BeforeEach
     void setUp() {
         server = MockBukkit.getMock();
         player = server.addPlayer();
+        characters = net.tfminecraft.games.support.TestCharacters.mockSessions();
         player.setOp(false);
         previousPlugin = Games.plugin;
         previousLayouts = new HashMap<>(Cache.tableLayouts);
@@ -76,6 +79,7 @@ class TableOptionsGuiTest {
 
     @AfterEach
     void tearDown() {
+        if(characters != null) characters.close();
         TableOptionsGui.INSTANCE.onQuit(new PlayerQuitEvent(player, ""));
         server.getScheduler().cancelTasks(Games.plugin);
         guilds.close();
@@ -290,6 +294,28 @@ class TableOptionsGuiTest {
         verify(manager, never()).applyHouse(any(), any());
         assertEquals(Messages.get(reason.equals("denied") ? "place.options_denied" : "place.options_live"),
                 player.nextMessage());
+    }
+
+    @Test
+    void missedCharacterEndCannotAuthorizeAnOldMenuOrQueuedChat() {
+        TableOptionsGui.openPlace(player,false,null);TableOptionsHolder old=holder();click(12);
+        AsyncPlayerChatEvent queued=chatEvent("25");TableOptionsGui.INSTANCE.onChat(queued);assertTrue(queued.isCancelled());
+        var b=new net.tfminecraft.tlibs.character.CharacterRef(player.getUniqueId(),UUID.randomUUID());
+        characters.when(()->net.tfminecraft.tlibs.character.Characters.currentSession(player)).thenReturn(java.util.Optional.of(new net.tfminecraft.tlibs.character.CharacterSession(b,2)));
+        characters.when(()->net.tfminecraft.tlibs.character.Characters.info(b.characterId())).thenReturn(java.util.Optional.of(new net.tfminecraft.tlibs.character.CharacterInfo(b,"B",net.tfminecraft.tlibs.character.CharacterStatus.ALIVE,null,java.util.Set.of(),0,null)));
+        server.getScheduler().performTicks(1);assertEquals(5,old.house().minBet());verify(manager,never()).armPlace(any(),anyString(),anyBoolean(),any());
+        player.openInventory(old.getInventory());click(16);verify(manager,never()).armPlace(any(),anyString(),anyBoolean(),any());
+    }
+
+    @Test
+    void currentStaffSessionCannotApplyAnOldOwnerSnapshotOrQueuedChatAfterEstateMovement() {
+        staff();Table table=editableTable();table.setOwnerCharacterId(UUID.randomUUID());TableOptionsGui.openEdit(player,table);
+        TableOptionsHolder old=holder();click(12);AsyncPlayerChatEvent queued=chatEvent("25");TableOptionsGui.INSTANCE.onChat(queued);
+        table.setOwnerPlayer(UUID.randomUUID());table.setOwnerCharacterId(UUID.randomUUID());server.getScheduler().performTicks(1);
+        assertEquals(5,old.house().minBet());assertEquals(5,table.minBet());verify(manager,never()).applyHouse(any(),any());
+        player.openInventory(old.getInventory());click(16);verify(manager,never()).applyHouse(any(),any());
+        UUID formerAccount=old.house().ownerPlayer(),formerCharacter=old.house().ownerCharacterId();table.setOwnerPlayer(formerAccount);table.setOwnerCharacterId(formerCharacter);
+        player.openInventory(old.getInventory());click(16);verify(manager,never()).applyHouse(any(),any());
     }
 
     @Test

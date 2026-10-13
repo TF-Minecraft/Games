@@ -14,6 +14,8 @@ public final class TableHouse {
     public static final String STAFF_PERM = "games.autodealer.staff";
 
     private UUID ownerPlayer;
+    private UUID ownerCharacterId;
+    private long ownerGeneration;
     private String ownerGuildId;
     private UUID ownerGuildIncarnation;
     private boolean autoDealer;
@@ -28,6 +30,8 @@ public final class TableHouse {
     public static TableHouse forPlace(Player player, TableLayout layout) {
         TableHouse house = new TableHouse();
         house.ownerPlayer = player.getUniqueId();
+        var token = net.tfminecraft.games.ownership.CharacterAccess.capture(player);
+        house.ownerCharacterId = token == null ? null : token.character();
         boolean staff = player.hasPermission(STAFF_PERM);
         boolean yamlAuto = layout != null && layout.autoDealer();
         if (staff && yamlAuto) {
@@ -53,6 +57,8 @@ public final class TableHouse {
     public static TableHouse from(Table table) {
         TableHouse house = new TableHouse();
         house.ownerPlayer = table.ownerPlayer();
+        house.ownerCharacterId = table.ownerCharacterId();
+        house.ownerGeneration = table.ownerGeneration();
         house.ownerGuildId = table.ownerGuildId();
         house.ownerGuildIncarnation = table.ownerGuildIncarnation();
         house.autoDealer = table.autoDealer();
@@ -68,6 +74,7 @@ public final class TableHouse {
 
     public void apply(Table table) {
         table.setOwnerPlayer(ownerPlayer);
+        table.setOwnerCharacterId(ownerCharacterId);
         table.setOwnerGuildId(ownerGuildId);
         table.setOwnerGuildIncarnation(ownerGuildIncarnation);
         table.setAutoDealer(autoDealer);
@@ -85,8 +92,16 @@ public final class TableHouse {
     }
 
     public void setOwnerPlayer(UUID ownerPlayer) {
+        if (!java.util.Objects.equals(this.ownerPlayer,ownerPlayer)) ownerCharacterId = null;
         this.ownerPlayer = ownerPlayer;
     }
+    public UUID ownerCharacterId() { return ownerCharacterId; }
+    public long ownerGeneration() { return ownerGeneration; }
+    public boolean matchesOwner(Table table) {
+        return ownerGeneration==table.ownerGeneration() && java.util.Objects.equals(ownerPlayer,table.ownerPlayer())
+                && java.util.Objects.equals(ownerCharacterId,table.ownerCharacterId());
+    }
+    public void setOwnerCharacterId(UUID character) { ownerCharacterId = character; }
 
     public String ownerGuildId() {
         return ownerGuildId;

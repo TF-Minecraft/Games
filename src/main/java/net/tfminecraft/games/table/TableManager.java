@@ -194,6 +194,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void tickHands() {
+        publishChatActors();
         handTicks++;
         for (Table table : tables.values()) {
             tickAway(table);
@@ -261,8 +262,11 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void armPlace(Player player, String gameId, boolean requireDeck, TableHouse house) {
+        var token = net.tfminecraft.games.ownership.CharacterAccess.capture(player);
+        if (token == null) return;
+        if(house!=null) { house.setOwnerPlayer(token.account());house.setOwnerCharacterId(token.character()); }
         arms.put(player.getUniqueId(),
-                new PlaceArm(gameId, System.currentTimeMillis() + PLACE_TIMEOUT_MS, requireDeck, house));
+                new PlaceArm(gameId, System.currentTimeMillis() + PLACE_TIMEOUT_MS, requireDeck, house, token));
     }
 
     public void selectGame(Player player, String gameId, Location at, boolean requireDeck) {
@@ -274,9 +278,79 @@ public final class TableManager implements Listener, WagerHost {
         player.sendMessage(Messages.get(requireDeck ? "place.armed" : "place.armed_admin"));
     }
 
-    public void loadAll() { loadTables(false); }
+    private net.tfminecraft.games.ownership.TableOwnershipStore ownershipStore;
+    private java.nio.file.Path ownershipRoot;
+    private final Set<UUID> estatePendingTables = new HashSet<>();
+    private final Set<String> invalidOwnerFiles = new HashSet<>();
+    private boolean ownershipInventoryComplete;
+    public net.tfminecraft.games.ownership.TableOwnershipStore ownershipStore() {
+        java.nio.file.Path root = Games.plugin.getDataFolder().toPath();
+        if (ownershipStore == null || !root.equals(ownershipRoot)) {
+            ownershipRoot = root;ownershipStore = new net.tfminecraft.games.ownership.TableOwnershipStore(root);
+        }
+        return ownershipStore;
+    }
+    public boolean ownershipHealthy(UUID id) {
+        try { ownershipStore().check(id);return !ownershipStore().held(id); }
+        catch (IOException ex) { return false; }
+    }
+    public void syncOwnership(Table table) {
+        table.ownershipHealthy(() -> ownershipHealthy(table.getId()));
+        table.setEstatePending(estatePendingTables.contains(table.getId()));
+    }
+    public void estatePending(Collection<UUID> ids, boolean pending) {
+        for(UUID id:ids) {
+            if(pending) estatePendingTables.add(id);else estatePendingTables.remove(id);
+            Table table=tables.get(id);if(table!=null) table.setEstatePending(pending);
+        }
+    }
+    public void checkpoint(Table table) throws IOException { saveWager(table); }
+    public void estateOwner(UUID id,UUID account,UUID character) {
+        Table table=tables.get(id);
+        if(table!=null) { table.setOwnerPlayer(account);table.setOwnerCharacterId(character);refreshLabel(table); }
+    }
+    private final Map<UUID,UUID> chatActors = new java.util.concurrent.ConcurrentHashMap<>();
+    public void publishChatActors() {
+        chatActors.clear();
+        tables.values().forEach(this::chatActorChanged);
+    }
+    public void chatActorChanged(Table table) {
+        chatActors.entrySet().removeIf(entry->table.getId().equals(entry.getValue()));
+        if(table.live() && table.actor()!=null) {
+            Player actor=Bukkit.getPlayer(table.actor());
+            if(actor!=null && isPlayActor(actor)) chatActors.put(table.actor(),table.getId());
+        }
+    }
+    public void loadAll() { ownershipStore = null;loadTables(false); }
 
     public void loadDeferred() { loadTables(true); }
+
+    private boolean validOwnerFile(File file) throws IOException {
+        if(invalidOwnerFiles.contains(file.getName()) && knownUnloadable(file)) return false;
+        String text=java.nio.file.Files.readString(file.toPath());
+        try {
+            var raw=net.tfminecraft.games.ownership.RawJson.parse(text);
+            net.tfminecraft.games.ownership.OwnershipMigration.validateRow(raw);
+            if(net.tfminecraft.games.ownership.RawJson.uuid(raw.get("id"))==null) throw new IOException("Invalid table ID");
+        } catch(IOException ex) {
+            invalidOwnerFiles.add(file.getName());markUnloadable(file);
+            Games.plugin.getLogger().warning("[Games] Failed to load table "+file.getName()+": "+ex.getMessage());return false;
+        }
+        invalidOwnerFiles.remove(file.getName());return true;
+    }
+    private Set<UUID> duplicateOwnerIds(File[] files) throws IOException {
+        ownershipInventoryComplete=true;
+        Set<UUID> seen=new HashSet<>(),duplicates=new HashSet<>();
+        for(File file:files) {
+            // No mutation is allowed before the complete raw inventory establishes uniqueness.
+            com.google.gson.JsonObject raw;
+            try { raw=net.tfminecraft.games.ownership.RawJson.read(file.toPath()); }
+            catch(IOException ex) { ownershipInventoryComplete=false;continue; }
+            UUID id=net.tfminecraft.games.ownership.RawJson.uuid(raw.get("id"));
+            if(id!=null && !seen.add(id)) duplicates.add(id);
+        }
+        duplicates.forEach(ownershipStore()::hold);return duplicates;
+    }
 
     private void loadTables(boolean onlyMissing) {
         File folder = tablesFolder();
@@ -284,8 +358,32 @@ public final class TableManager implements Listener, WagerHost {
         if (files == null) {
             return;
         }
+        Set<UUID> duplicates;
+        try { duplicates=duplicateOwnerIds(files); }
+        catch(IOException ex) {
+            // Cache raw shape failures for the usual repair-and-retry path without publishing others.
+            for(File file:files) try { validOwnerFile(file); } catch(IOException ignored) { }
+            return;
+        }
         for (File file : files) {
             try {
+                if(!validOwnerFile(file)) continue;
+                UUID rawId=net.tfminecraft.games.ownership.RawJson.uuid(net.tfminecraft.games.ownership.RawJson.read(file.toPath()).get("id"));
+                if(duplicates.contains(rawId)) { Games.plugin.getLogger().warning("[Games] Duplicate table ID held: "+rawId);continue; }
+                if(ownershipInventoryComplete) {
+                    if (!net.tfminecraft.games.guild.GuildTableMigration.prepare(file.toPath(),
+                            new File(Games.plugin.getDataFolder(), "migrations/guild-tables").toPath())) continue;
+                    if (!ownershipStore().prepare(file.toPath())) continue;
+                } else {
+                    var raw=net.tfminecraft.games.ownership.RawJson.read(file.toPath());
+                    String guild=net.tfminecraft.games.ownership.RawJson.string(raw,"ownerGuildId");
+                    if((net.tfminecraft.games.ownership.RawJson.uuid(raw.get("ownerPlayer"))!=null && net.tfminecraft.games.ownership.RawJson.uuid(raw.get("ownerCharacterId"))==null)
+                            || (guild!=null && !guild.isBlank() && (!raw.has("ownerGuildMigrated") || raw.get("ownerGuildMigrated").isJsonNull() || !raw.get("ownerGuildMigrated").getAsBoolean()))) continue;
+                    ownershipStore().observe(file.toPath());
+                }
+                var ownerRow = ownershipStore().row(file.toPath());
+                Table loaded = tables.get(ownerRow.id());
+                if (loaded != null) { loaded.setOwnerCharacterId(ownerRow.character());syncOwnership(loaded); }
                 if (onlyMissing) {
                     if (knownUnloadable(file)) continue;
                     try {
@@ -293,8 +391,6 @@ public final class TableManager implements Listener, WagerHost {
                         if (tables.containsKey(fileId)) continue;
                     } catch (IllegalArgumentException ignored) { /* Older/imported files may have another filename. */ }
                 }
-                if (!net.tfminecraft.games.guild.GuildTableMigration.prepare(file.toPath(),
-                        new File(Games.plugin.getDataFolder(), "migrations/guild-tables").toPath())) continue;
             } catch (RuntimeException ex) {
                 // The file's shape is the problem; do not re-read it every pass until it changes.
                 markUnloadable(file);
@@ -317,6 +413,7 @@ public final class TableManager implements Listener, WagerHost {
                     // A missing world or card set can arrive later, so this stays retryable.
                     continue;
                 }
+                syncOwnership(table);
                 tables.put(table.getId(), table);
                 unloadableFiles.remove(file.getName());
                 if (net.tfminecraft.games.wager.WagerJournal.blocked(table)) {
@@ -467,6 +564,7 @@ public final class TableManager implements Listener, WagerHost {
         if (arm == null) {
             return false;
         }
+        if (!net.tfminecraft.games.ownership.CharacterAccess.current(arm.token)) { arms.remove(player.getUniqueId());return true; }
         if (at == null || at.getWorld() == null) {
             return false;
         }
@@ -515,7 +613,8 @@ public final class TableManager implements Listener, WagerHost {
             }
             house.apply(table);
         } else {
-            table.setOwnerPlayer(player.getUniqueId());
+            table.setOwnerPlayer(arm.token.account());
+            table.setOwnerCharacterId(arm.token.character());
             TableLayout layout = Cache.layoutOf(arm.gameId);
             if (layout != null) {
                 table.setSmallBlind(layout.smallBlind());
@@ -531,6 +630,7 @@ public final class TableManager implements Listener, WagerHost {
             return true;
         }
         table.setDeckConsumed(arm.requireDeck);
+        syncOwnership(table);
         tables.put(table.getId(), table);
         save(table);
         if (arm.requireDeck) {
@@ -610,16 +710,21 @@ public final class TableManager implements Listener, WagerHost {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        arms.remove(event.getPlayer().getUniqueId());
-        clearLootArm(event.getPlayer().getUniqueId());
-        onWagerQuit(event.getPlayer());
-        leaveIfAtTable(event.getPlayer(), true);
-        clearDealer(event.getPlayer());
-        selectCooldown.remove(event.getPlayer().getUniqueId());
-        handLocks.remove(event.getPlayer().getUniqueId());
-        layoutHoldUntil.remove(event.getPlayer().getUniqueId());
-        selectAnimGen.remove(event.getPlayer().getUniqueId());
-        clearRevealed(event.getPlayer().getUniqueId(), null);
+        net.tfminecraft.games.ownership.CharacterAccess.ended(event.getPlayer().getUniqueId());
+        clearPlayer(event.getPlayer());
+    }
+    public void clearPlacement(UUID account) { arms.remove(account);clearLootArm(account); }
+    public void clearPlayer(Player player) {
+        arms.remove(player.getUniqueId());
+        clearLootArm(player.getUniqueId());
+        onWagerQuit(player);
+        leaveIfAtTable(player, true);
+        clearDealer(player);
+        selectCooldown.remove(player.getUniqueId());
+        handLocks.remove(player.getUniqueId());
+        layoutHoldUntil.remove(player.getUniqueId());
+        selectAnimGen.remove(player.getUniqueId());
+        clearRevealed(player.getUniqueId(), null);
     }
 
     /** A dealer who logged off mid-round gets back the tray the round left them. */
@@ -717,11 +822,12 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         Player player = event.getPlayer();
-        if (!isPlayActor(player)) {
-            return;
-        }
+        var token=net.tfminecraft.games.ownership.CharacterAccess.published(player.getUniqueId());
+        if (token==null || !chatActors.containsKey(player.getUniqueId())) return;
         event.setCancelled(true);
-        Bukkit.getScheduler().runTask(Games.plugin, () -> applyPlayCall(player, action));
+        Bukkit.getScheduler().runTask(Games.plugin, () -> {
+            if(net.tfminecraft.games.ownership.CharacterAccess.current(token)) applyPlayCall(player, action);
+        });
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -1642,7 +1748,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void beginSession(Table table) {
-        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table) || !net.tfminecraft.denareconomy.api.Denars.taxReady()) return;
+        if (table.ownershipHeld() || table.estatePending() || table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table) || !net.tfminecraft.denareconomy.api.Denars.taxReady()) return;
         if (table.live()) {
             return;
         }
@@ -1654,17 +1760,20 @@ public final class TableManager implements Listener, WagerHost {
         for (UUID owner : participants) {
             Player active = Bukkit.getPlayer(owner);
             var captured = table.wagerCharacters().get(owner);
-            var current = active == null ? null : net.tfminecraft.tlibs.character.Characters.currentSession(active)
-                    .map(session -> session.ref()).orElse(null);
+            var token=net.tfminecraft.games.ownership.CharacterAccess.capture(active);
+            var current = token == null ? null : new net.tfminecraft.tlibs.character.CharacterRef(token.account(),token.character());
             if (current == null && captured == null) return;
             if (current != null && captured != null && !current.equals(captured)) return;
             if (current != null) table.wagerCharacters().putIfAbsent(owner, current);
         }
         table.startSession();
+        save(table);
+        if (table.ownershipHeld() || table.moneyBlocked()) return;
         Game game = gameOf(table);
         if (game != null) {
             game.onSessionStart(table);
         }
+        publishChatActors();
     }
 
     public void tryBeginSession(Table table) {
@@ -1877,13 +1986,13 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public boolean canEditHouse(Player player, Table table) {
-        if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return false;
+        if (table.ownershipHeld() || table.estatePending() || table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return false;
         if (player.hasPermission(TableHouse.STAFF_PERM) || player.hasPermission("games.admin")) {
             return true;
         }
-        if (GuildTables.counts(table)) return GuildTables.leadsOwner(table, player);
-        UUID owner = table.ownerPlayer();
-        return owner != null && owner.equals(player.getUniqueId());
+        if (table.ownerGuildId() != null && !table.ownerGuildId().isBlank()) return GuildTables.leadsOwner(table, player);
+        return net.tfminecraft.games.ownership.OwnershipKind.of(table) == net.tfminecraft.games.ownership.OwnershipKind.PRIVATE
+                && net.tfminecraft.games.ownership.CharacterAccess.owns(table, player);
     }
 
     private void refreshGuildAutoIdle(String guildId) {
@@ -1936,6 +2045,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void applyHouse(Table table, TableHouse house) {
+        if(!house.matchesOwner(table) || table.ownershipHeld() || table.estatePending()) return;
         String wasGuild = table.ownerGuildId();
         UUID wasIncarnation = table.ownerGuildIncarnation();
         house.apply(table);
@@ -1973,6 +2083,7 @@ public final class TableManager implements Listener, WagerHost {
     private static void applyHouseData(Table table, TableData data) {
         TableLayout layout = Cache.layoutOf(table.getGameId());
         table.setOwnerPlayer(playerId(data.ownerPlayer));
+        table.setOwnerCharacterId(playerId(data.ownerCharacterId));
         table.setFloatOwner(playerId(data.floatOwner));
         table.setDeckConsumed(!Boolean.FALSE.equals(data.deckConsumed));
         table.setOwnerGuildId(data.ownerGuildId);
@@ -1987,7 +2098,7 @@ public final class TableManager implements Listener, WagerHost {
         if (data.autoDealer == null) {
             boolean yaml = layout != null && layout.autoDealer();
             table.setAutoDealer(yaml);
-            table.setStaffMint(yaml);
+            table.setStaffMint(data.staffMint != null ? data.staffMint : yaml);
             if (layout != null) {
                 table.setMinBet(layout.minBet());
                 table.setMaxBet(layout.maxBet());
@@ -2137,6 +2248,10 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         Table table = tableNearby(player);
+        var token=net.tfminecraft.games.ownership.CharacterAccess.capture(player);
+        var captured=table.wagerCharacters().get(player.getUniqueId());
+        if(token==null || (captured==null ? !net.tfminecraft.games.ownership.CharacterAccess.owns(table,player)
+                : !token.account().equals(captured.ownerId()) || !token.character().equals(captured.characterId()))) return;
         Game game = gameOf(table);
         switch (action) {
             case "hit" -> game.onBetHit(table, player);
@@ -2156,6 +2271,7 @@ public final class TableManager implements Listener, WagerHost {
 
     /** Only asked of idle tables, where a table without a game is plain free play. */
     private static boolean allowFreeDraw(Table table, Player player) {
+        if(table.ownershipHeld() || table.estatePending()) return false;
         Game game = gameOf(table);
         return game == null || game.allowFreeDraw(table, player);
     }
@@ -2796,6 +2912,7 @@ public final class TableManager implements Listener, WagerHost {
 
     /** True when the game will not take this player's money now, such as mid-hand from a stranger. */
     private static boolean refuseStake(Table table, Player player) {
+        if(table.ownershipHeld() || table.estatePending()) return true;
         Game game = gameOf(table);
         if (game == null || game.allowStake(table, player)) {
             return false;
@@ -4464,15 +4581,16 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void saveWager(Table table) throws IOException {
-        net.tfminecraft.games.persistence.DurableFiles.write(tableFile(table.getId()).toPath(), GSON.toJson(toData(table)));
+        ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(toData(table)).getAsJsonObject());
     }
 
     private void save(Table table) {
         File file = tableFile(table.getId());
         TableData data = toData(table);
         try {
-            net.tfminecraft.games.persistence.DurableFiles.write(file.toPath(), GSON.toJson(data));
+            ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(data).getAsJsonObject());
         } catch (IOException ex) {
+            table.setOwnershipHeld(true);table.setMoneyBlocked(true);
             Games.plugin.getLogger().warning("[Games] Failed to save table " + table.getId() + ": " + ex.getMessage());
         }
     }
@@ -4524,6 +4642,10 @@ public final class TableManager implements Listener, WagerHost {
             }
         }
         data.ownerPlayer = table.ownerPlayer() != null ? table.ownerPlayer().toString() : null;
+        data.ownerCharacterId = table.ownerCharacterId() == null ? null : table.ownerCharacterId().toString();
+        data.ownerIdentityVersion = 2;
+        data.ownershipLive = table.live();
+        data.ownershipPaying = table.isPaying();
         data.ownerGuildId = table.ownerGuildId();
         data.ownerGuildIncarnation = table.ownerGuildIncarnation() == null ? null : table.ownerGuildIncarnation().toString();
         data.ownerGuildMigrated = true;
@@ -4764,12 +4886,14 @@ public final class TableManager implements Listener, WagerHost {
         private final long expiresAt;
         private final boolean requireDeck;
         private final TableHouse house;
+        private final net.tfminecraft.games.ownership.OwnerSession token;
 
-        private PlaceArm(String gameId, long expiresAt, boolean requireDeck, TableHouse house) {
+        private PlaceArm(String gameId, long expiresAt, boolean requireDeck, TableHouse house, net.tfminecraft.games.ownership.OwnerSession token) {
             this.gameId = gameId;
             this.expiresAt = expiresAt;
             this.requireDeck = requireDeck;
             this.house = house;
+            this.token = token;
         }
     }
 
@@ -4803,6 +4927,9 @@ public final class TableManager implements Listener, WagerHost {
         List<StakeData> ledger = new ArrayList<>();
         List<PileData> piles = new ArrayList<>();
         String ownerPlayer;
+        String ownerCharacterId;
+        Integer ownerIdentityVersion;
+        Boolean ownershipLive, ownershipPaying;
         String ownerGuildId;
         String ownerGuildIncarnation;
         Boolean ownerGuildMigrated;

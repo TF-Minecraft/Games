@@ -15,7 +15,7 @@
         <denareconomy.version>0.3.0</denareconomy.version>
         <rpcharacters.version>2.16.0</rpcharacters.version>
         <simplefactions.version>4.0.0</simplefactions.version>
-        <tlibs.version>2.4.0</tlibs.version>
+        <tlibs.version>2.6.0</tlibs.version>
     </properties>
 
     <dependencyManagement>

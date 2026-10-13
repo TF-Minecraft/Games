@@ -48,6 +48,7 @@ public final class TableOptionsGui implements Listener {
     private static final long CHAT_TICKS = 20L * 60;
 
     private static final Map<UUID, ChatPrompt> prompts = new ConcurrentHashMap<>();
+    public static void clear(UUID account) { prompts.remove(account); }
 
     private TableOptionsGui() {}
 
@@ -71,8 +72,10 @@ public final class TableOptionsGui implements Listener {
     @SuppressWarnings("deprecation")
     private static void open(Player player, boolean requireDeck, Location pending, UUID editId, String gameId,
             TableHouse house) {
+        var token=net.tfminecraft.games.ownership.CharacterAccess.capture(player);
+        if(token==null) return;
         prompts.remove(player.getUniqueId());
-        TableOptionsHolder holder = new TableOptionsHolder(requireDeck, pending, editId, gameId, house);
+        TableOptionsHolder holder = new TableOptionsHolder(requireDeck, pending, editId, gameId, house,token);
         Inventory inventory = Bukkit.createInventory(holder, SIZE, Messages.get("place.options_title"));
         holder.setInventory(inventory);
         fill(player, holder);
@@ -168,6 +171,7 @@ public final class TableOptionsGui implements Listener {
         event.setCancelled(true);
         // Only players can open this menu.
         Player player = (Player) event.getWhoClicked();
+        if(!net.tfminecraft.games.ownership.CharacterAccess.current(holder.session())) { player.closeInventory();return; }
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
             return;
         }
@@ -220,7 +224,7 @@ public final class TableOptionsGui implements Listener {
         GuiSounds.click(player);
         UUID id = player.getUniqueId();
         ChatPrompt prompt = new ChatPrompt(holder.requireDeck(), holder.pendingHit(), holder.editTableId(),
-                holder.gameId(), holder.house(), field);
+                holder.gameId(), holder.house(), field,holder.session());
         prompts.put(id, prompt);
         player.closeInventory();
         player.sendMessage(Messages.get("place.options_chat_" + field.key));
@@ -231,7 +235,7 @@ public final class TableOptionsGui implements Listener {
             }
             // Quitting clears the prompt, so a prompt that is still waiting belongs to an online player.
             prompts.remove(id);
-            Bukkit.getPlayer(id).sendMessage(Messages.get("place.options_chat_timeout"));
+            if(net.tfminecraft.games.ownership.CharacterAccess.current(prompt.session)) Bukkit.getPlayer(id).sendMessage(Messages.get("place.options_chat_timeout"));
         }, CHAT_TICKS);
     }
 
@@ -256,10 +260,14 @@ public final class TableOptionsGui implements Listener {
 
     private static void applyChat(Player player, ChatPrompt prompt, String raw) {
         ChatPrompt current = prompts.get(player.getUniqueId());
-        if (current != prompt) {
+        if (current != prompt || !net.tfminecraft.games.ownership.CharacterAccess.current(prompt.session)) {
             return;
         }
         prompts.remove(player.getUniqueId());
+        if(prompt.editId!=null) {
+            Table table=TableManager.get().table(prompt.editId);
+            if(table==null || !prompt.house.matchesOwner(table)) return;
+        }
         if (raw.equalsIgnoreCase("cancel")) {
             player.sendMessage(Messages.get("place.options_chat_cancelled"));
             reopen(player, prompt);
@@ -306,6 +314,7 @@ public final class TableOptionsGui implements Listener {
     }
 
     private static void confirm(Player player, TableOptionsHolder holder) {
+        if(!net.tfminecraft.games.ownership.CharacterAccess.current(holder.session())) return;
         TableHouse house = holder.house();
         boolean poker = isPoker(holder.gameId());
         if (!poker) {
@@ -333,11 +342,13 @@ public final class TableOptionsGui implements Listener {
                 player.sendMessage(Messages.get("place.options_denied"));
                 return;
             }
+            if(!house.matchesOwner(table)) return;
             TableManager.get().applyHouse(table, house);
             player.sendMessage(Messages.get("place.options_saved"));
             return;
         }
-        house.setOwnerPlayer(player.getUniqueId());
+        house.setOwnerPlayer(holder.session().account());
+        house.setOwnerCharacterId(holder.session().character());
         TableManager.get().armPlace(player, holder.gameId(), holder.requireDeck(), house);
         Location at = holder.pendingHit();
         if (at != null) {
@@ -440,15 +451,17 @@ public final class TableOptionsGui implements Listener {
         private final String gameId;
         private final TableHouse house;
         private final ChatField field;
+        private final net.tfminecraft.games.ownership.OwnerSession session;
 
         private ChatPrompt(boolean requireDeck, Location pending, UUID editId, String gameId, TableHouse house,
-                ChatField field) {
+                ChatField field,net.tfminecraft.games.ownership.OwnerSession session) {
             this.requireDeck = requireDeck;
             this.pending = pending;
             this.editId = editId;
             this.gameId = gameId;
             this.house = house;
             this.field = field;
+            this.session = session;
         }
     }
 }

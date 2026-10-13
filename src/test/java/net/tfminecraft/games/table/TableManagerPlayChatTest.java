@@ -23,6 +23,7 @@ class TableManagerPlayChatTest extends TableManagerFixture {
         when(game.allowPlayChat(table, player)).thenReturn(false);
         assertFalse(chat("hit").isCancelled(), "the game is not taking play words right now");
         when(game.allowPlayChat(table, player)).thenReturn(true);
+        manager.publishChatActors(); // The main-thread phase boundary publishes immutable chat eligibility.
         assertTrue(chat("Hit!").isCancelled());
         verify(game, never()).onBetHit(any(), any());
         tick(1);

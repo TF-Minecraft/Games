@@ -34,7 +34,9 @@ public final class GameSelectGui implements Listener {
     // Keep the existing legacy text representation, formatting, and exact-string comparisons.
     @SuppressWarnings("deprecation")
     public static void open(Player player, boolean requireDeck, Location pending) {
-        GameSelectHolder holder = new GameSelectHolder(requireDeck, pending);
+        var token=net.tfminecraft.games.ownership.CharacterAccess.capture(player);
+        if(token==null) return;
+        GameSelectHolder holder = new GameSelectHolder(requireDeck, pending,token);
         Inventory inventory = Bukkit.createInventory(holder, SIZE, Messages.get("place.gui_title"));
         holder.setInventory(inventory);
         inventory.setItem(POKER_SLOT, gameIcon("poker", "place.gui_poker"));
@@ -70,6 +72,7 @@ public final class GameSelectGui implements Listener {
         event.setCancelled(true);
         // Only players can open this menu.
         Player player = (Player) event.getWhoClicked();
+        if(!net.tfminecraft.games.ownership.CharacterAccess.current(holder.session())) { player.closeInventory();return; }
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
             return;
         }
