@@ -33,12 +33,20 @@ public class Games extends JavaPlugin {
     private final HelpLoader helpLoader = new HelpLoader();
     private final CommandManager commandManager = new CommandManager();
     private final WagerCommand wagerCommand = new WagerCommand();
+    private boolean ownershipActive;
 
     @Override
     public void onEnable() {
         plugin = this;
         net.tfminecraft.games.wager.WagerJournal.initialize();
         createFolders();
+        try {
+            net.tfminecraft.games.persistence.DurableFiles.write(getDataFolder().toPath().resolve("ownership-active"),"Games is running\n");
+            ownershipActive=true;
+        } catch(IOException ex) {
+            getLogger().severe("Could not establish the ownership recovery marker: "+ex.getMessage());
+            getServer().getPluginManager().disablePlugin(this);return;
+        }
         createConfigs();
         if (!loadConfigs()) {
             getLogger().warning("Games loaded with config errors.");
@@ -49,7 +57,9 @@ public class Games extends JavaPlugin {
         getServer().getPluginManager().registerEvents(TableManager.get(), this);
         getServer().getPluginManager().registerEvents(GameSelectGui.INSTANCE, this);
         getServer().getPluginManager().registerEvents(TableOptionsGui.INSTANCE, this);
+        net.tfminecraft.games.ownership.EstateBridge.start(this,TableManager.get());
         TableManager.get().loadAll();
+        net.tfminecraft.games.ownership.CharacterAccess.start(this);
         getServer().getScheduler().runTaskTimer(this, () -> TableManager.get().loadDeferred(), 100L, 100L);
         TableManager.get().startClock();
 
@@ -77,6 +87,11 @@ public class Games extends JavaPlugin {
         TableManager.get().despawnWorldAll();
         DisplayManager.get().shutdown();
         ProtocolLibBridge.shutdown();
+        if(ownershipActive && TableManager.get().tables().stream().noneMatch(table->table.ownershipHeld() || table.moneyBlocked()
+                || net.tfminecraft.games.wager.WagerJournal.blocked(table))) {
+            try { net.tfminecraft.games.persistence.DurableFiles.delete(getDataFolder().toPath().resolve("ownership-active"));ownershipActive=false; }
+            catch(IOException ex) { getLogger().warning("Ownership recovery marker retained: "+ex.getMessage()); }
+        }
         getLogger().info("Games disabled.");
     }
 

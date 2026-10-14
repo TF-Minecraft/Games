@@ -189,6 +189,7 @@ public final class GuildTables {
         if (table == null || player == null) {
             return false;
         }
+        if (table.ownershipHeld() || table.estatePending()) return false;
         if (player.hasPermission(TableHouse.STAFF_PERM) || player.hasPermission("games.admin")) {
             return true;
         }
@@ -196,7 +197,8 @@ public final class GuildTables {
         if (guildId != null && !guildId.isBlank()) {
             return owns(guildId, table.ownerGuildIncarnation()) && isMember(guildId, player);
         }
-        return table.ownerPlayer() != null && table.ownerPlayer().equals(player.getUniqueId());
+        return net.tfminecraft.games.ownership.OwnershipKind.of(table) == net.tfminecraft.games.ownership.OwnershipKind.PRIVATE
+                && !table.estatePending() && net.tfminecraft.games.ownership.CharacterAccess.owns(table, player);
     }
 
     /** True for the leader of the guild that owns this table, who is the one who may place and remove it. */

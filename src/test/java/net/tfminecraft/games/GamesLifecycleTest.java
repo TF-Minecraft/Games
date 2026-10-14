@@ -36,6 +36,7 @@ class GamesLifecycleTest {
             MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
             assertTrue(plugin.isEnabled());
             assertTrue(Files.isDirectory(folder.resolve("Data/tables")));
+            assertTrue(Files.exists(folder.resolve("ownership-active")));
             for (String name : List.of("config.yml", "messages.yml", "cards.yml", "games.yml", "help.yml")) {
                 assertTrue(Files.size(folder.resolve(name)) > 0, name);
             }
@@ -94,7 +95,7 @@ class GamesLifecycleTest {
     }
 
     @Test
-    void dataFolderBlockedByAFileReportsEachDefaultThatCannotBeInstalled() throws Exception {
+    void dataFolderBlockedByAFileCannotStartWithoutTheDurableRecoveryMarker() throws Exception {
         withLoadedPlugin(true, (plugin, manager, records) -> {
             var folder = plugin.getDataFolder().toPath();
             Files.createDirectories(folder.getParent());
@@ -102,20 +103,25 @@ class GamesLifecycleTest {
             Files.writeString(folder, "not a directory");
             try {
                 MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
-                assertTrue(plugin.isEnabled());
-                List<String> severe = records.stream()
-                        .filter(record -> record.getLevel() == java.util.logging.Level.SEVERE)
-                        .map(LogRecord::getMessage).toList();
-                for (String name : List.of("config.yml", "messages.yml", "cards.yml", "games.yml", "help.yml")) {
-                    assertTrue(severe.stream().anyMatch(message ->
-                            message.startsWith("Failed to copy default resource " + name + ": ")), name);
-                }
+                assertFalse(plugin.isEnabled());
                 assertTrue(records.stream().map(LogRecord::getMessage)
-                        .anyMatch("Games loaded with config errors."::equals));
-                verify(manager).loadAll();
+                        .anyMatch(message->message.startsWith("Could not establish the ownership recovery marker: ")));
+                verify(manager,never()).loadAll();
             } finally {
                 Files.deleteIfExists(folder);
             }
+        });
+    }
+
+    @Test
+    void cleanStopRemovesTheMarkerWhileUnresolvedMoneyRetainsIt() throws Exception {
+        withLoadedPlugin(true, (plugin, manager, records) -> {
+            MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
+            var marker=plugin.getDataFolder().toPath().resolve("ownership-active");assertTrue(Files.exists(marker));
+            MockBukkit.getMock().getPluginManager().disablePlugin(plugin);assertFalse(Files.exists(marker));
+            MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
+            var table=mock(net.tfminecraft.games.table.Table.class);when(table.moneyBlocked()).thenReturn(true);when(manager.tables()).thenReturn(List.of(table));
+            MockBukkit.getMock().getPluginManager().disablePlugin(plugin);assertTrue(Files.exists(marker));
         });
     }
 

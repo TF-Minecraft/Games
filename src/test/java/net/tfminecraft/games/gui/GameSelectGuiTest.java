@@ -38,6 +38,7 @@ class GameSelectGuiTest {
     private ItemAPI items;
     private MockedStatic<TableManager> managers;
     private MockedStatic<TLibs> libs;
+    private MockedStatic<net.tfminecraft.tlibs.character.Characters> characters;
 
     @BeforeEach
     void setUp() {
@@ -47,6 +48,7 @@ class GameSelectGuiTest {
         when(Games.plugin.namespace()).thenReturn("games");
         when(Games.plugin.isEnabled()).thenReturn(true);
         player = MockBukkit.getMock().addPlayer();
+        characters = net.tfminecraft.games.support.TestCharacters.mockSessions();
         manager = mock(TableManager.class);
         managers = mockStatic(TableManager.class);
         managers.when(TableManager::get).thenReturn(manager);
@@ -58,6 +60,7 @@ class GameSelectGuiTest {
 
     @AfterEach
     void tearDown() {
+        if(characters != null) characters.close();
         libs.close();
         managers.close();
         Games.plugin = previousPlugin;

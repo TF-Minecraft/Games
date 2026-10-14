@@ -37,6 +37,7 @@ class GuildTablesTest {
     private Plugin integration;
     private Guild guild;
     private Player player;
+    private MockedStatic<net.tfminecraft.tlibs.character.Characters> characters;
     private final List<Table> tables = new ArrayList<>();
 
     @BeforeEach
@@ -67,6 +68,8 @@ class GuildTablesTest {
         player = mock(Player.class);
         when(player.getName()).thenReturn("Alice");
         when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(player.isOnline()).thenReturn(true);
+        characters=net.tfminecraft.games.support.TestCharacters.mockSessions();
         factions.when(() -> FactionManager.getGuildByMember(player)).thenReturn(guild);
         factions.when(() -> FactionManager.getGuildByString("guild")).thenReturn(guild);
         TableManager manager = mock(TableManager.class);
@@ -77,6 +80,7 @@ class GuildTablesTest {
 
     @AfterEach
     void closeMocks() {
+        if (characters != null) characters.close();
         if (managers != null) managers.close();
         if (api != null) api.close();
         if (factions != null) factions.close();
@@ -230,6 +234,7 @@ class GuildTablesTest {
         personal.setOwnerPlayer(UUID.randomUUID());
         assertFalse(GuildTables.mayDeal(personal, player));
         personal.setOwnerPlayer(player.getUniqueId());
+        personal.setOwnerCharacterId(net.tfminecraft.games.support.TestCharacters.ref(player).characterId());
         assertTrue(GuildTables.mayDeal(personal, player));
         when(player.hasPermission(TableHouse.STAFF_PERM)).thenReturn(true);
         assertTrue(GuildTables.mayDeal(table("other"), player));
@@ -255,6 +260,7 @@ class GuildTablesTest {
     void blankSavedGuildFallsBackToPersonalOwnershipAndDeletedGuildHasNoMembers() {
         Table blank = table(" ");
         blank.setOwnerPlayer(player.getUniqueId());
+        blank.setOwnerCharacterId(net.tfminecraft.games.support.TestCharacters.ref(player).characterId());
         assertTrue(GuildTables.mayDeal(blank, player));
         assertFalse(GuildTables.mayDeal(table("deleted"), player));
     }

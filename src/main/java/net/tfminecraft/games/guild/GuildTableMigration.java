@@ -13,8 +13,9 @@ public final class GuildTableMigration {
     private GuildTableMigration() {}
 
     public static boolean prepare(Path tableFile, Path migrationFolder) throws IOException {
-        JsonObject data = JsonParser.parseString(Files.readString(tableFile)).getAsJsonObject();
-        if (data.has("ownerGuildMigrated") && data.get("ownerGuildMigrated").getAsBoolean()) return true;
+        JsonObject data = net.tfminecraft.games.ownership.RawJson.read(tableFile);
+        if (data.has("ownerGuildMigrated") && !data.get("ownerGuildMigrated").isJsonNull()
+                && data.get("ownerGuildMigrated").getAsBoolean()) return true;
         if (!data.has("ownerGuildId") || data.get("ownerGuildId").isJsonNull()
                 || data.get("ownerGuildId").getAsString().isBlank()) return true;
         if (!GuildTables.ready()) return false;
@@ -23,7 +24,9 @@ public final class GuildTableMigration {
         JsonObject migrated;
         if (Files.exists(manifest)) {
             // A complete plan is written before the table. Replay the exact incarnation, never resolve again.
-            migrated = JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();
+            migrated = net.tfminecraft.games.ownership.RawJson.read(manifest);
+            JsonObject original = net.tfminecraft.games.ownership.RawJson.read(backup);
+            if (!data.equals(original) && !data.equals(migrated)) throw new IOException("Table changed after frozen guild planning");
         } else {
             GuildTables.Lookup lookup = GuildTables.resolveIncarnation(data.get("ownerGuildId").getAsString());
             // A failed lookup is not a deleted guild: stamp nothing and let a later pass retry.

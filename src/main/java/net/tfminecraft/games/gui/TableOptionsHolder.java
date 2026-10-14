@@ -15,16 +15,23 @@ public final class TableOptionsHolder implements InventoryHolder {
     private final UUID editTableId;
     private final String gameId;
     private final TableHouse house;
+    private final net.tfminecraft.games.ownership.OwnerSession session;
     private Inventory inventory;
 
     public TableOptionsHolder(boolean requireDeck, Location pendingHit, UUID editTableId, String gameId,
             TableHouse house) {
+        this(requireDeck,pendingHit,editTableId,gameId,house,null);
+    }
+    public TableOptionsHolder(boolean requireDeck, Location pendingHit, UUID editTableId, String gameId,
+            TableHouse house, net.tfminecraft.games.ownership.OwnerSession session) {
         this.requireDeck = requireDeck;
         this.pendingHit = pendingHit != null ? pendingHit.clone() : null;
         this.editTableId = editTableId;
         this.gameId = gameId;
         this.house = house;
+        this.session = session;
     }
+    public net.tfminecraft.games.ownership.OwnerSession session() { return session; }
 
     public boolean requireDeck() {
         return requireDeck;

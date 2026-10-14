@@ -112,6 +112,7 @@ class MoneyTxTest {
         when(payee.flightTarget()).thenReturn(owner);
         when(payee.online()).thenReturn(true);
         when(payee.character()).thenReturn(character);
+        when(payee.payeeCharacter()).thenReturn(character);
         when(payee.canAccept(anyInt())).thenReturn(true);
         when(payee.accept(anyList())).thenAnswer(call -> TableLedger.valueOf(call.getArgument(0)));
         return payee;

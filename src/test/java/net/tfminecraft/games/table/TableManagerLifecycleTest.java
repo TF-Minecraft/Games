@@ -88,7 +88,7 @@ class TableManagerLifecycleTest extends TableManagerFixture {
         }
     }
 
-    @Test void aNullSeatListLoadsAsAnIdleTableWithoutRewritingTheFile() throws Exception {
+    @Test void aNullSeatListLoadsIdlePreservingRawFieldsWhileLegacyModeFreezes() throws Exception {
         UUID id = UUID.randomUUID();
         JsonObject saved = document(id, "freeplay");
         saved.add("actives", JsonNull.INSTANCE);
@@ -102,8 +102,9 @@ class TableManagerLifecycleTest extends TableManagerFixture {
         assertNotNull(loaded);
         assertTrue(loaded.actives().isEmpty());
         assertEquals(List.of("one", "two"), loaded.getDeck().remainingIds());
-        assertEquals(before, Files.readString(folder().resolve(id + ".json")),
-                "Only a table with a session to undo is written back on load");
+        JsonObject expected=saved.deepCopy();expected.addProperty("staffMint",false);
+        assertEquals(expected,net.tfminecraft.games.ownership.RawJson.read(folder().resolve(id+".json")),"Mode freezing must retain the null seats and captured wager identity");
+        try(var files=Files.walk(data.resolve("migrations/table-ownership"))) { assertEquals(before,Files.readString(files.filter(path->path.toString().endsWith(".original")).findFirst().orElseThrow())); }
     }
 
     @Test void aStaleTableOfARetiredGameIsRefundedAndLabelledWithoutGameHooks() throws Exception {
@@ -308,10 +309,11 @@ class TableManagerLifecycleTest extends TableManagerFixture {
         gameId.setAccessible(true);
         requireDeck.setAccessible(true);
         house.setAccessible(true);
-        Constructor<?> make = type.getDeclaredConstructor(String.class, long.class, boolean.class, TableHouse.class);
+        Field token = type.getDeclaredField("token");token.setAccessible(true);
+        Constructor<?> make = type.getDeclaredConstructor(String.class, long.class, boolean.class, TableHouse.class, net.tfminecraft.games.ownership.OwnerSession.class);
         make.setAccessible(true);
         arms.put(player.getUniqueId(), make.newInstance(gameId.get(live), System.currentTimeMillis() - 1L,
-                requireDeck.get(live), house.get(live)));
+                requireDeck.get(live), house.get(live),token.get(live)));
     }
 
     private ChunkLoadEvent chunkLoad(World where, int x, int z) {

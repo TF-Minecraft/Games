@@ -45,6 +45,43 @@ public final class PlayerAccount implements MoneyAccount {
 
     boolean online() { return player != null && player.isOnline(); }
 
+    net.tfminecraft.tlibs.character.CharacterRef payeeCharacter() {
+        var current = character();
+        return current != null ? current : OutgoingRefund.recipient(player);
+    }
+
+    boolean outgoing() { return character() == null && OutgoingRefund.recipient(player) != null; }
+
+    /** Reserve all recipient legs against one detached storage inventory before anything moves. */
+    boolean reserve(List<Stake> stakes, java.util.Map<UUID, ItemStack[]> rooms) {
+        ItemStack[] room = rooms.computeIfAbsent(id, ignored -> {
+            ItemStack[] contents = player.getInventory().getStorageContents().clone();
+            for (int i = 0; i < contents.length; i++)
+                if (contents[i] != null) contents[i] = contents[i].clone();
+            return contents;
+        });
+        for (Stake stake : stakes) {
+            int left = stake.count();
+            int max = Math.max(1, stake.item().getMaxStackSize());
+            for (ItemStack slot : room) {
+                if (slot == null || slot.getType().isAir() || !slot.isSimilar(stake.item())) continue;
+                int add = Math.min(left, Math.max(0, max - slot.getAmount()));
+                slot.setAmount(slot.getAmount() + add);
+                left -= add;
+            }
+            for (int i = 0; i < room.length && left > 0; i++) {
+                if (room[i] != null && !room[i].getType().isAir()) continue;
+                ItemStack placed = stake.item().clone();
+                int add = Math.min(left, max);
+                placed.setAmount(add);
+                room[i] = placed;
+                left -= add;
+            }
+            if (left > 0) return false;
+        }
+        return true;
+    }
+
     Object snapshot() {
         java.util.List<Object> state = new java.util.ArrayList<>();
         state.add(character());
@@ -217,6 +254,9 @@ public final class PlayerAccount implements MoneyAccount {
     /** Into the player's inventory, with whatever does not fit dropped at their feet. */
     private void give(ItemStack items) {
         for (ItemStack rest : player.getInventory().addItem(items).values()) {
+            if (outgoing()) net.tfminecraft.games.Games.plugin.getLogger().severe(
+                    "[Games] Outgoing refund exceeded reserved inventory: owner=" + id
+                            + ", character=" + payeeCharacter());
             drop(rest);
         }
     }

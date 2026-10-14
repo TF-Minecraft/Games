@@ -81,25 +81,28 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         }
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"true,missing,missing,true", "true,null,false,false", "false,null,true,true", "true,true,missing,false", "false,false,true,true", "true,null,null,true"})
+    void storedAndLegacyEffectiveModeMatchRawClassificationWithoutOwnerRecapture(boolean yamlAuto,String auto,String mint,boolean expectedMint) throws Exception {
+        TableLayout previous=Cache.tableLayouts.put("freeplay",new TableLayout(Cache.pokerCardSet,"Cards","icon",6,Map.of(),null,null,null,0,false,yamlAuto,5,80,10));
+        try {
+            UUID id=UUID.randomUUID(),recorded=UUID.randomUUID();JsonObject saved=document(id);saved.addProperty("ownerPlayer",player.getUniqueId().toString());saved.addProperty("ownerCharacterId",recorded.toString());saved.addProperty("ownerIdentityVersion",2);saved.addProperty("houseFloat",0);
+            if(auto.equals("missing"))saved.remove("autoDealer");else if(auto.equals("null"))saved.add("autoDealer",com.google.gson.JsonNull.INSTANCE);else saved.addProperty("autoDealer",Boolean.parseBoolean(auto));
+            if(mint.equals("missing"))saved.remove("staffMint");else if(mint.equals("null"))saved.add("staffMint",com.google.gson.JsonNull.INSTANCE);else saved.addProperty("staffMint",Boolean.parseBoolean(mint));
+            write(id+".json",saved);manager.loadAll();Table loaded=manager.table(id);assertNotNull(loaded);assertEquals(expectedMint,loaded.staffMint());
+            assertEquals(expectedMint?net.tfminecraft.games.ownership.OwnershipKind.STAFF:net.tfminecraft.games.ownership.OwnershipKind.PRIVATE,manager.ownershipStore().row(folder().resolve(id+".json")).kind());
+            assertEquals(recorded,loaded.ownerCharacterId());assertEquals(player.getUniqueId(),loaded.ownerPlayer());assertEquals(0,loaded.houseFloat());
+            var raw=net.tfminecraft.games.ownership.RawJson.read(folder().resolve(id+".json"));assertEquals(expectedMint,raw.get("staffMint").getAsBoolean());assertEquals(recorded,UUID.fromString(raw.get("ownerCharacterId").getAsString()));assertEquals(0,raw.get("houseFloat").getAsInt());
+        } finally { if(previous==null)Cache.tableLayouts.remove("freeplay");else Cache.tableLayouts.put("freeplay",previous); }
+    }
+
     @Test
-    void malformedHouseOwnerDoesNotDiscardValidTableCardsOrRefundableStakes() throws Exception {
-        UUID id = UUID.randomUUID();
-        JsonObject saved = document(id);
-        saved.addProperty("ownerPlayer", "old-owner-is-not-a-uuid");
-        saved.getAsJsonArray("ledger").add(stake(player.getUniqueId(), 3));
-        write(id + ".json", saved);
-        manager.loadAll();
-        Table loaded = manager.table(id);
-        assertNotNull(loaded);
-        assertNull(loaded.ownerPlayer());
-        assertFalse(loaded.autoDealer());
-        assertFalse(loaded.staffMint());
-        assertEquals(1, loaded.minBet());
-        assertEquals(20, loaded.maxBet());
-        assertEquals(2, loaded.getDeck().remaining() + loaded.getDeck().discarded());
-        assertEquals(3, inventoryGold());
-        assertEquals(0, droppedGold());
-        assertTrue(loaded.ledger().isEmpty());
+    void malformedHouseOwnerHoldsRawCardsAndStakesWithoutNormalizingOrRefundingThem() throws Exception {
+        UUID id = UUID.randomUUID();JsonObject saved = document(id);
+        saved.addProperty("ownerPlayer", "old-owner-is-not-a-uuid");saved.getAsJsonArray("ledger").add(stake(player.getUniqueId(), 3));
+        write(id + ".json", saved);String before=Files.readString(folder().resolve(id+".json"));manager.loadAll();
+        assertNull(manager.table(id));assertEquals(before,Files.readString(folder().resolve(id+".json")));
+        assertEquals(0,inventoryGold());assertEquals(0,droppedGold());
     }
 
     @Test
@@ -410,30 +413,18 @@ class TableManagerPersistenceTest extends TableManagerFixture {
     }
 
     @Test
-    void failedSaveKeepsCommittedStakeAndCanPersistItAfterFilesystemRecovery() throws Exception {
-        Table table = place(false);
-        Path path = folder().resolve(table.getId() + ".json");
-        Files.delete(path);
-        Files.createDirectory(path);
-        Path obstruction = path.resolve("occupied");
-        Files.writeString(obstruction, "unrelated contents");
-        stakeCoin(player, table);
-        assertEquals(1, table.ledger().total());
-        assertEquals(0, inventoryGold());
-        assertEquals("unrelated contents", Files.readString(obstruction));
-        verify(Games.plugin.getLogger(), atLeastOnce()).warning(contains("Failed to save table " + table.getId()));
-        Files.delete(obstruction);
-        Files.delete(path);
-        manager.applyHouse(table, TableHouse.from(table));
-        JsonArray saved = read(table.getId()).getAsJsonArray("ledger");
-        assertEquals(1, saved.size());
-        assertEquals(1, saved.get(0).getAsJsonObject().get("count").getAsInt());
-        assertEquals(player.getUniqueId().toString(), saved.get(0).getAsJsonObject().get("owner").getAsString());
-        assertEquals(1, table.ledger().total() + inventoryGold());
+    void replacedSourceHoldsNewStakesAndRefusesAutomaticRecreationAfterFilesystemRecovery() throws Exception {
+        Table table = place(false);Path path = folder().resolve(table.getId() + ".json");
+        Files.delete(path);Files.createDirectory(path);Path obstruction = path.resolve("occupied");Files.writeString(obstruction,"unrelated contents");
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET,1));
+        clickFelt(player,table);assertEquals(0,table.ledger().total());assertEquals(1,inventoryGold());
+        assertEquals("unrelated contents",Files.readString(obstruction));assertTrue(table.ownershipHeld());
+        Files.delete(obstruction);Files.delete(path);manager.applyHouse(table,TableHouse.from(table));
+        assertFalse(Files.exists(path));assertEquals(1,inventoryGold());assertTrue(table.ownershipHeld());
     }
 
     @Test
-    void failedFileDeletionReportsObstructionWhilePickupReturnsPlayersMoney() throws Exception {
+    void obstructedSourceHoldsPickupAndPreservesCommittedMoney() throws Exception {
         Table table = place(false);
         stakeCoin(player, table);
         Path path = folder().resolve(table.getId() + ".json");
@@ -448,12 +439,12 @@ class TableManagerPersistenceTest extends TableManagerFixture {
         when(pickup.getDamager()).thenReturn(player);
         manager.onHitEntity(pickup);
         verify(pickup).setCancelled(true);
-        assertNull(manager.table(table.getId()));
-        assertTrue(table.ledger().isEmpty());
-        assertEquals(1, inventoryGold());
+        assertSame(table,manager.table(table.getId()));
+        assertEquals(1,table.ledger().total());
+        assertEquals(0, inventoryGold());
         assertEquals(0, droppedGold());
         assertEquals("unrelated contents", Files.readString(obstruction));
-        verify(Games.plugin.getLogger()).warning("[Games] Could not delete table file " + table.getId() + ".json");
+        assertTrue(table.ownershipHeld());
     }
 
     @ParameterizedTest
@@ -584,7 +575,7 @@ class TableManagerPersistenceTest extends TableManagerFixture {
                 .mapToInt(ItemStack::getAmount).sum());
         assertEquals(0, manager.trayDenars(loaded));
         assertNull(loaded.floatOwner());
-        assertFalse(read(id).has("floatOwner"));
+        assertTrue(read(id).get("floatOwner").isJsonNull());
         manager.onJoin(new PlayerJoinEvent(player, "join"));
         assertEquals(0, inventoryGold(), "logging in pays nobody else");
     }

@@ -69,6 +69,7 @@ abstract class TableManagerFixture {
     MockedStatic<WorldAnchors> anchors;
     MockedStatic<GamesRegistry> games;
     MockedStatic<Messages> messages;
+    MockedStatic<net.tfminecraft.tlibs.character.Characters> characters;
     List<Card> catalog;
     private int oldDealTicks, oldRecycleTicks, oldPayoutTicks, oldVoteSeconds, oldMinPlayers;
     private boolean oldShowChips;
@@ -124,7 +125,7 @@ abstract class TableManagerFixture {
         MockBukkit.getMock().addWorld(world);
         player = MockBukkit.getMock().addPlayer();
         player.teleport(new Location(world, 0, 65, 0, 90, 0));
-        track(net.tfminecraft.games.support.TestCharacters.mockSessions());
+        characters = track(net.tfminecraft.games.support.TestCharacters.mockSessions());
         denars = track(mockStatic(net.tfminecraft.denareconomy.api.Denars.class));
         denars.when(net.tfminecraft.denareconomy.api.Denars::taxReady).thenReturn(true);
         denars.when(net.tfminecraft.denareconomy.api.Denars::ready).thenReturn(true);
@@ -214,7 +215,9 @@ abstract class TableManagerFixture {
     private record SingletonField(Field field, Object original, Object contents) {
         @SuppressWarnings({"rawtypes", "unchecked"})
         void restore(TableManager manager) throws IllegalAccessException {
-            if (original instanceof Map map) {
+            if (!Modifier.isFinal(field.getModifiers())) {
+                field.set(manager, original);
+            } else if (original instanceof Map map) {
                 map.clear();
                 map.putAll((Map) contents);
             } else if (original instanceof Collection collection) {

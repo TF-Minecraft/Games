@@ -99,4 +99,13 @@ class GuildTableMigrationTest {
             assertFalse(Files.exists(data.resolve("unused")));
         }
     }
+    @Test void nullableLegacyFlagMigratesWithExactBackupAndUnknownNulls() throws Exception {
+        Path table=source();String before="{\"ownerGuildId\":\"guild\",\"ownerGuildMigrated\":null,\"houseFloat\":17,\"future\":null}";Files.writeString(table,before);
+        try(var guilds=mockStatic(GuildTables.class)) {
+            guilds.when(GuildTables::ready).thenReturn(true);guilds.when(()->GuildTables.resolveIncarnation("guild")).thenReturn(found(UUID.randomUUID()));
+            assertTrue(GuildTableMigration.prepare(table,data.resolve("migration")));
+            assertEquals(before,Files.readString(data.resolve("migration/backup/table.json")));
+            var after=net.tfminecraft.games.ownership.RawJson.read(table);assertTrue(after.get("ownerGuildMigrated").getAsBoolean());assertTrue(after.has("future"));assertTrue(after.get("future").isJsonNull());assertEquals(17,after.get("houseFloat").getAsInt());
+        }
+    }
 }

@@ -24,7 +24,7 @@ public final class WagerJournal {
     record Plan(String reason, List<Leg> legs, List<Movement> movements, int floatBefore, int floatAfter, int profit,
             Map<UUID, net.tfminecraft.tlibs.character.CharacterRef> characters, CitizenTax.Levy taxQuote) {}
     private record Intent(String operationId, Plan plan, String state) {}
-    private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Gson JSON = new GsonBuilder().serializeNulls().setPrettyPrinting().create();
     private static final Map<Path, Intent> ACTIVE = new HashMap<>();
     private WagerJournal() {}
 
@@ -37,6 +37,9 @@ public final class WagerJournal {
 
     public static boolean blocked(Table table) {
         return Games.plugin != null && Games.plugin.getDataFolder() != null && Files.exists(file(table));
+    }
+    public static boolean active(Table table) {
+        Intent intent=ACTIVE.get(file(table));return intent!=null && ("prepared".equals(intent.state()) || "applying".equals(intent.state()));
     }
 
     public static void quarantine(Table table, String reason) {

@@ -46,14 +46,20 @@ class FreePlayGameTest {
         when(host.getUniqueId()).thenReturn(owner);
         when(shoe.getUniqueId()).thenReturn(dealer);
         when(player.getUniqueId()).thenReturn(UUID.randomUUID());
-        table.setOwnerPlayer(owner);
-        table.setDealerId(dealer);
+        when(host.isOnline()).thenReturn(true);when(shoe.isOnline()).thenReturn(true);
+        table.setOwnerPlayer(owner);table.setOwnerCharacterId(net.tfminecraft.games.support.TestCharacters.ref(host).characterId());
+        table.setDealerId(dealer);table.wagerCharacters().put(dealer,net.tfminecraft.games.support.TestCharacters.ref(shoe));
+        try(var characters=net.tfminecraft.games.support.TestCharacters.mockSessions();
+                var bukkit=mockStatic(org.bukkit.Bukkit.class,CALLS_REAL_METHODS)) {
+            bukkit.when(()->org.bukkit.Bukkit.getPlayer(owner)).thenReturn(host);
+            bukkit.when(()->org.bukkit.Bukkit.getPlayer(dealer)).thenReturn(shoe);
         assertFalse(game.allowManualPotFlush(null, host));
         assertTrue(game.allowManualPotFlush(table, host), "the owner may pay out their own table");
         assertTrue(game.allowManualPotFlush(table, shoe), "so may whoever holds the shoe");
         assertFalse(game.allowManualPotFlush(table, player), "a visitor may not take everyone's stakes");
         table.startSession();
         assertFalse(game.allowManualPotFlush(table, host), "not even the owner, once a game is under way");
+        }
     }
 
     @Test

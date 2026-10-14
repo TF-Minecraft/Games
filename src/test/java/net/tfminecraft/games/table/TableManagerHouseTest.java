@@ -30,8 +30,8 @@ class TableManagerHouseTest extends TableManagerFixture {
     @Test void aTableWithNoRecordedOwnerCanOnlyBeEditedByStaff() {
         Table table = placeAt("freeplay", 0);
         TableHouse house = TableHouse.from(table);
-        house.setOwnerPlayer(null);
-        manager.applyHouse(table, house);
+        table.setOwnerPlayer(null);
+        manager.persistHouseChange(table);
         assertNull(table.ownerPlayer());
         assertFalse(manager.canEditHouse(player, table));
         player.addAttachment(Games.plugin, "games.admin", true);

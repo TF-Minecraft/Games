@@ -14,6 +14,7 @@ It supports both structured games with managed rounds and a free-play table for 
 - **Poker tournaments** — host buy-in Hold'em tournaments with chip stacks, rebuys, antes and rising blinds.
 - **Blackjack against the house** — play with an automatic dealer or a player taking the dealer's position, including double and split decisions.
 - **Guild-owned tables** — connect house games to a guild's funds and let its members take over dealing between rounds.
+- **Character-owned private tables** — private owner controls follow the recorded character, with guarded property inheritance after a settled game.
 - **Help at the table** — in-game books explain each game's rules and available actions.
 
 ## Documentation
@@ -35,6 +36,9 @@ Surefire writes test results to `target/surefire-reports/`.
 JaCoCo writes HTML, XML and CSV reports to `target/site/jacoco/`, and CI uploads
 them as a `coverage-reports-*` artifact. No coverage threshold is enforced.
 Packet encoding and client rendering still need a run on a real server.
+Ownership tests cover raw migration preservation, current character sessions,
+stale menus and idle-only estate recovery. The standalone compatibility probe
+and conservative rollback procedure are described in the project documentation.
 
 ## License
 

@@ -60,6 +60,12 @@ public final class Table {
     private int maxBet;
     private int autoCountdown;
     private UUID ownerPlayer;
+    private UUID ownerCharacterId;
+    private long ownerGeneration;
+    private boolean ownershipHeld;
+    private boolean estatePending;
+    private java.util.function.BooleanSupplier ownershipHealthy = () -> true;
+    private java.util.function.BooleanSupplier ownershipWriteReady = () -> true;
     private boolean moneyBlocked;
     private final java.util.Map<UUID, net.tfminecraft.tlibs.character.CharacterRef> wagerCharacters = new java.util.HashMap<>();
 
@@ -292,6 +298,7 @@ public final class Table {
 
     public void setActor(UUID actor) {
         this.actor = actor;
+        TableManager.get().chatActorChanged(this);
     }
 
     public String phase() {
@@ -300,6 +307,7 @@ public final class Table {
 
     public void setPhase(String phase) {
         this.phase = phase;
+        TableManager.get().chatActorChanged(this);
     }
 
     public List<UUID> boxes() {
@@ -373,8 +381,20 @@ public final class Table {
     }
 
     public void setOwnerPlayer(UUID ownerPlayer) {
+        if (!Objects.equals(this.ownerPlayer,ownerPlayer)) { ownerCharacterId = null;ownerGeneration++; }
         this.ownerPlayer = ownerPlayer;
     }
+    public UUID ownerCharacterId() { return ownerCharacterId; }
+    public void setOwnerCharacterId(UUID character) { if(!Objects.equals(ownerCharacterId,character)) ownerGeneration++;ownerCharacterId = character; }
+    public long ownerGeneration() { return ownerGeneration; }
+    public boolean ownershipHeld() { return ownershipHeld || !ownershipHealthy.getAsBoolean(); }
+    public boolean ownershipReviewHeld() { return ownershipHeld; }
+    public void setOwnershipHeld(boolean held) { ownershipHeld = held; }
+    public void ownershipHealthy(java.util.function.BooleanSupplier check) { ownershipHealthy = check; }
+    public void ownershipWriteReady(java.util.function.BooleanSupplier check) { ownershipWriteReady = check; }
+    public boolean ownershipWriteReady() { return !ownershipHeld() && ownershipWriteReady.getAsBoolean(); }
+    public boolean estatePending() { return estatePending; }
+    public void setEstatePending(boolean pending) { estatePending = pending; }
 
     public String ownerGuildId() {
         return ownerGuildId;
@@ -476,7 +496,12 @@ public final class Table {
 
     /** The player who put this table down, or whoever is holding its shoe. */
     public boolean hostedBy(UUID playerId) {
-        return playerId.equals(ownerPlayer) || playerId.equals(dealerId);
+        org.bukkit.entity.Player player = org.bukkit.Bukkit.getPlayer(playerId);
+        if (player == null || ownershipHeld()) return false;
+        var kind = net.tfminecraft.games.ownership.OwnershipKind.of(this);
+        if (!estatePending && kind == net.tfminecraft.games.ownership.OwnershipKind.PRIVATE
+                && net.tfminecraft.games.ownership.CharacterAccess.owns(this, player)) return true;
+        return playerId.equals(dealerId) && net.tfminecraft.games.ownership.CharacterAccess.deals(this,player);
     }
 
     /** Whether putting this table down used up a deck, so picking it up should give one back. */
@@ -501,6 +526,7 @@ public final class Table {
         if (moneyBlocked || net.tfminecraft.games.wager.WagerJournal.blocked(this)) return;
         live = false;
         actor = null;
+        TableManager.get().chatActorChanged(this);
         phase = null;
         boxes.clear();
         boxIndex = 0;
