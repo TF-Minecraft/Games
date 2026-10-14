@@ -65,6 +65,7 @@ public final class Table {
     private boolean ownershipHeld;
     private boolean estatePending;
     private java.util.function.BooleanSupplier ownershipHealthy = () -> true;
+    private java.util.function.BooleanSupplier ownershipWriteReady = () -> true;
     private boolean moneyBlocked;
     private final java.util.Map<UUID, net.tfminecraft.tlibs.character.CharacterRef> wagerCharacters = new java.util.HashMap<>();
 
@@ -390,6 +391,8 @@ public final class Table {
     public boolean ownershipReviewHeld() { return ownershipHeld; }
     public void setOwnershipHeld(boolean held) { ownershipHeld = held; }
     public void ownershipHealthy(java.util.function.BooleanSupplier check) { ownershipHealthy = check; }
+    public void ownershipWriteReady(java.util.function.BooleanSupplier check) { ownershipWriteReady = check; }
+    public boolean ownershipWriteReady() { return !ownershipHeld() && ownershipWriteReady.getAsBoolean(); }
     public boolean estatePending() { return estatePending; }
     public void setEstatePending(boolean pending) { estatePending = pending; }
 

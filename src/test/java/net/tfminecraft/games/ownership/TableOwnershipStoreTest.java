@@ -33,6 +33,19 @@ class TableOwnershipStoreTest {
     }
 
     @Test
+    void failedIntegrityReadRemainsHeldInMemoryAfterReadAccessReturns() throws Exception {
+        Path path = write(row());
+        var store = new TableOwnershipStore(data);
+        store.observe(path);
+        try (var files = org.mockito.Mockito.mockStatic(Files.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            files.when(() -> Files.readAllBytes(path)).thenThrow(new IOException("unreadable source"));
+            assertThrows(IOException.class, () -> store.check(id));
+        }
+        assertTrue(store.held(id));
+        assertThrows(TableOwnershipStore.Conflict.class, () -> store.save(id, row()));
+    }
+
+    @Test
     void ordinarySaveRestartRetainsNullsUnknownLedgerMetadataAndInertWagerEntries()
             throws Exception {
         JsonObject raw = row(),

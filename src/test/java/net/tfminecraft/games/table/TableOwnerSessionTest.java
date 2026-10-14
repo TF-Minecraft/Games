@@ -16,6 +16,71 @@ import java.util.concurrent.atomic.AtomicReference;
 
 class TableOwnerSessionTest extends TableManagerFixture {
     @Test
+    void realEndEventAfterSessionClearsRefundsOnlyCapturedOutgoingInventory() {
+        Table table = place(false);
+        var ended = new net.tfminecraft.tlibs.character.CharacterSession(
+                net.tfminecraft.games.support.TestCharacters.ref(player), 1);
+        player.getInventory().setItemInMainHand(new ItemStack(Material.GOLD_NUGGET, 7));
+        assertEquals(7, net.tfminecraft.games.wager.WagerEngine.get().begin(table, "stake")
+                .move(net.tfminecraft.games.wager.Accounts.coins(table, player),
+                        net.tfminecraft.games.wager.Accounts.bucket(table, player.getUniqueId()), 7).commit().moved());
+        table.actives().add(player.getUniqueId());
+        games.when(() -> net.tfminecraft.games.game.GamesRegistry.of(table.getGameId())).thenReturn(null);
+        CharacterAccess.start(org.mockbukkit.mockbukkit.MockBukkit.createMockPlugin());
+        player.openInventory(org.bukkit.Bukkit.createInventory(null, 9));
+        characters.when(() -> net.tfminecraft.tlibs.character.Characters.currentSession(player))
+                .thenReturn(Optional.empty());
+        characters.when(() -> net.tfminecraft.tlibs.character.Characters.isCurrent(ended)).thenReturn(false);
+        org.bukkit.Bukkit.getPluginManager().callEvent(new net.tfminecraft.tlibs.character.CharacterSessionEndEvent(
+                player, ended, net.tfminecraft.tlibs.character.CharacterSessionEndEvent.Reason.SWITCH));
+        assertEquals(7, net.tfminecraft.games.wager.Accounts.coins(table, player).available());
+        assertEquals(0, table.ledger().total());
+        assertFalse(table.moneyBlocked());
+        assertFalse(net.tfminecraft.games.wager.WagerJournal.blocked(table));
+        assertFalse(table.actives().contains(player.getUniqueId()));
+        assertNull(CharacterAccess.published(player.getUniqueId()));
+        var next = new net.tfminecraft.tlibs.character.CharacterSession(
+                new net.tfminecraft.tlibs.character.CharacterRef(player.getUniqueId(), UUID.randomUUID()), 2);
+        // Model the provider saving A's seven refunded coins before loading B's empty inventory.
+        player.getInventory().clear();
+        characters.when(() -> net.tfminecraft.tlibs.character.Characters.currentSession(player))
+                .thenReturn(Optional.of(next));
+        assertEquals(0, net.tfminecraft.games.wager.Accounts.coins(table, player).available());
+        assertEquals(0, table.ledger().total());
+    }
+    @Test
+    void hotOwnershipChecksDoNotReadSourcesButDeferredPassDetectsSameSizeSameTimeEdits() throws Exception {
+        Table table = place(false);
+        var file = data.resolve("Data/tables/" + table.getId() + ".json");
+        var store = manager.ownershipStore();
+        try (var raw = mockStatic(java.nio.file.Files.class, CALLS_REAL_METHODS)) {
+            for (int i = 0; i < 100; i++) assertFalse(table.ownershipHeld());
+            raw.verify(() -> java.nio.file.Files.readAllBytes(file), never());
+        }
+        String original = java.nio.file.Files.readString(file);
+        var time = java.nio.file.Files.getLastModifiedTime(file);
+        String changed = original.replace(table.ownerCharacterId().toString(), UUID.randomUUID().toString());
+        assertNotEquals(original, changed);
+        java.nio.file.Files.writeString(file, changed);
+        java.nio.file.Files.setLastModifiedTime(file, time);
+        manager.loadDeferred();
+        assertTrue(table.ownershipHeld());
+        assertTrue(store.held(table.getId()));
+        assertEquals(changed, java.nio.file.Files.readString(file));
+    }
+
+    @Test
+    void deferredPassHoldsDeletedSourcesEvenWhenFolderInventoryIsEmpty() throws Exception {
+        Table table = place(false);
+        var file = data.resolve("Data/tables/" + table.getId() + ".json");
+        java.nio.file.Files.delete(file);
+        manager.loadDeferred();
+        assertTrue(table.ownershipHeld());
+        assertFalse(java.nio.file.Files.exists(file));
+        assertThrows(java.io.IOException.class, () -> manager.checkpoint(table));
+        assertFalse(java.nio.file.Files.exists(file));
+    }
+    @Test
     void duplicateRawIdsAreHeldBeforeAnyOwnerOrGuildMigrationPublishes() throws Exception {
         UUID id = UUID.randomUUID();
         java.nio.file.Path folder = data.resolve("Data/tables");

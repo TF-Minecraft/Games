@@ -181,6 +181,8 @@ public final class MoneyTx {
         List<Planned> planned = new ArrayList<>();
         Map<MoneyAccount, MoneyAccount> copies = new IdentityHashMap<>();
         Map<String, MoneyAccount> sources = new java.util.HashMap<>();
+        Map<UUID, ItemStack[]> rooms = new java.util.HashMap<>();
+        boolean sourceChecked = false;
         for (Leg leg : legs) {
             String sourceKey = leg.from instanceof BucketAccount ? "bucket:" + leg.from.feltOwner()
                     : leg.from instanceof PlayerAccount ? "player:" + leg.from.flightTarget()
@@ -213,12 +215,21 @@ public final class MoneyTx {
             if (!leg.to.canAccept(plan.denars())) {
                 return TxResult.failed(TxResult.Reason.BANK_SHORT, want, 0);
             }
+            if (!sourceChecked) {
+                if (!table.ownershipWriteReady()) return TxResult.failed(TxResult.Reason.BANK_SHORT, want, 0);
+                sourceChecked = true;
+            }
             // Only a leg that will actually pay someone needs its captured character checked;
             // an empty tray or bucket plans nothing and must not freeze the table.
             if (leg.to instanceof PlayerAccount recipient && recipient.flightTarget() != null) {
                 CharacterRef expected = table.wagerCharacters().get(recipient.flightTarget());
-                if (expected == null || (recipient.online() && !expected.equals(recipient.character()))) {
+                if (expected == null || (recipient.online() && !expected.equals(recipient.payeeCharacter()))) {
                     WagerJournal.quarantine(table, "Payout character changed: owner=" + recipient.flightTarget() + ", expected=" + expected);
+                    return TxResult.failed(TxResult.Reason.PLAYER_SHORT, plan.denars(), 0);
+                }
+                if (recipient.online() && recipient.outgoing() && !recipient.reserve(plan.preview(), rooms)) {
+                    WagerJournal.quarantine(table, "Outgoing character cannot hold payout: owner="
+                            + recipient.flightTarget() + ", character=" + expected + ", value=" + plan.denars());
                     return TxResult.failed(TxResult.Reason.PLAYER_SHORT, plan.denars(), 0);
                 }
             }

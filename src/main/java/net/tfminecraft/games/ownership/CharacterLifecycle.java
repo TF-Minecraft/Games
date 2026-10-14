@@ -19,9 +19,10 @@ final class CharacterLifecycle implements Listener {
         if (!account.equals(event.getPlayer().getUniqueId())) return;
         CharacterAccess.ended(account);
         TableOptionsGui.clear(account);
-        var player = Bukkit.getPlayer(account);
-        if (player != null) {
-            TableManager.get().clearPlayer(player);
+        var player = event.getPlayer();
+        if (Bukkit.getPlayer(account) == player) {
+            net.tfminecraft.games.wager.OutgoingRefund.during(player, event.getSession(),
+                    () -> TableManager.get().clearPlayer(player));
             var holder = player.getOpenInventory().getTopInventory().getHolder();
             if (holder instanceof TableOptionsHolder || holder instanceof GameSelectHolder)
                 player.closeInventory();

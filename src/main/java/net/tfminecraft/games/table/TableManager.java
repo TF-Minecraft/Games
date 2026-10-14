@@ -291,11 +291,16 @@ public final class TableManager implements Listener, WagerHost {
         return ownershipStore;
     }
     public boolean ownershipHealthy(UUID id) {
+        // Full source checks remain at writes, estate publication and the deferred loading pass.
+        return !ownershipStore().held(id);
+    }
+    private boolean ownershipWriteReady(UUID id) {
         try { ownershipStore().check(id);return !ownershipStore().held(id); }
         catch (IOException ex) { return false; }
     }
     public void syncOwnership(Table table) {
         table.ownershipHealthy(() -> ownershipHealthy(table.getId()));
+        table.ownershipWriteReady(() -> ownershipWriteReady(table.getId()));
         table.setEstatePending(estatePendingTables.contains(table.getId()));
     }
     public void estatePending(Collection<UUID> ids, boolean pending) {
@@ -309,16 +314,24 @@ public final class TableManager implements Listener, WagerHost {
         Table table=tables.get(id);
         if(table!=null) { table.setOwnerPlayer(account);table.setOwnerCharacterId(character);refreshLabel(table); }
     }
-    private final Map<UUID,UUID> chatActors = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile Map<UUID,UUID> chatActors = Map.of();
     public void publishChatActors() {
-        chatActors.clear();
-        tables.values().forEach(this::chatActorChanged);
+        Map<UUID,UUID> next = new HashMap<>();
+        tables.values().forEach(table -> addChatActor(table, next));
+        chatActors = Map.copyOf(next);
     }
     public void chatActorChanged(Table table) {
-        chatActors.entrySet().removeIf(entry->table.getId().equals(entry.getValue()));
+        Map<UUID,UUID> next = new HashMap<>(chatActors);
+        next.values().removeIf(table.getId()::equals);
+        addChatActor(table, next);
+        chatActors = Map.copyOf(next);
+    }
+    private void addChatActor(Table table, Map<UUID,UUID> into) {
         if(table.live() && table.actor()!=null) {
             Player actor=Bukkit.getPlayer(table.actor());
-            if(actor!=null && isPlayActor(actor)) chatActors.put(table.actor(),table.getId());
+            Game game = gameOf(table);
+            if(actor!=null && atTable(actor, table) && game!=null && game.allowPlayChat(table, actor))
+                into.put(table.actor(),table.getId());
         }
     }
     public void loadAll() { ownershipStore = null;loadTables(false); }
@@ -353,6 +366,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void loadTables(boolean onlyMissing) {
+        for (Table loaded : tables.values()) {
+            try { ownershipStore().check(loaded.getId()); }
+            catch (IOException ex) { ownershipStore().hold(loaded.getId()); }
+        }
         File folder = tablesFolder();
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
         if (files == null) {
@@ -823,10 +840,12 @@ public final class TableManager implements Listener, WagerHost {
         }
         Player player = event.getPlayer();
         var token=net.tfminecraft.games.ownership.CharacterAccess.published(player.getUniqueId());
-        if (token==null || !chatActors.containsKey(player.getUniqueId())) return;
+        UUID tableId = chatActors.get(player.getUniqueId());
+        if (token==null || tableId==null) return;
         event.setCancelled(true);
         Bukkit.getScheduler().runTask(Games.plugin, () -> {
-            if(net.tfminecraft.games.ownership.CharacterAccess.current(token)) applyPlayCall(player, action);
+            if(net.tfminecraft.games.ownership.CharacterAccess.current(token)
+                    && table(tableId) == tableNearby(player)) applyPlayCall(player, action);
         });
     }
 
@@ -884,6 +903,10 @@ public final class TableManager implements Listener, WagerHost {
 
     private void pickup(Player player, Table table) {
         if (table.moneyBlocked() || net.tfminecraft.games.wager.WagerJournal.blocked(table)) return;
+        if (!table.ownershipWriteReady()) {
+            player.sendMessage(Messages.get("place.pickup_denied"));
+            return;
+        }
         cancelVote(table, "wager.cancelled");
         table.bumpRecycleGen();
         cancelLootArmsForTable(table.getId());

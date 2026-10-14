@@ -124,15 +124,19 @@ public final class TableOwnershipStore {
 
     public void check(UUID id) throws IOException {
         Source source = sources.get(id);
-        if (conflicts.contains(id)
-                || (source != null
-                        && (!Files.isRegularFile(source.path())
-                                || !source.hash()
-                                        .equals(
-                                                OwnershipMigration.hash(
-                                                        Files.readAllBytes(source.path())))))) {
+        try {
+            if (conflicts.contains(id)
+                    || (source != null
+                            && (!Files.isRegularFile(source.path())
+                                    || !source.hash()
+                                            .equals(
+                                                    OwnershipMigration.hash(
+                                                            Files.readAllBytes(source.path())))))) {
+                throw new Conflict("Table source changed outside its writer: " + id);
+            }
+        } catch (IOException ex) {
             conflicts.add(id);
-            throw new Conflict("Table source changed outside its writer: " + id);
+            throw ex;
         }
     }
 
