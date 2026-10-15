@@ -438,8 +438,85 @@ class CommandManagerTest {
         when(player.hasPermission("games.help")).thenReturn(true);
         assertEquals(List.of("help"), commands.onTabComplete(player, command, "games", new String[] {""}));
         admin();
+        when(player.hasPermission("games.admin.reload")).thenReturn(true);
         assertEquals(List.of("help", "reload", "deck", "display", "place", "payout", "session", "deal"),
                 commands.onTabComplete(player, command, "games", new String[] {""}));
+    }
+
+    @Test void reloadCompletionHonorsAnExplicitChildPermissionDenial() {
+        admin();
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {"REL"}).isEmpty());
+        when(player.hasPermission("games.admin.reload")).thenReturn(true);
+        assertEquals(List.of("reload"), commands.onTabComplete(player, command, "games", new String[] {"REL"}));
+        when(player.hasPermission("games.admin")).thenReturn(false);
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {""}).isEmpty());
+    }
+
+    @Test void dealBackCompletionFollowsBothAcceptedModifierPositions() {
+        admin();
+        for (String pile : List.of("board", "DEALER")) {
+            for (String prefix : List.of("", "B", "back")) {
+                assertEquals(List.of("back"), commands.onTabComplete(player, command, "games",
+                        new String[] {"DEAL", "TABLE", pile, prefix}));
+                assertEquals(List.of("back"), commands.onTabComplete(player, command, "games",
+                        new String[] {"deal", "table", pile, "2", prefix}));
+            }
+        }
+        for (String invalid : List.of("0", "-1", "x", "99999999999999", "back")) {
+            assertTrue(commands.onTabComplete(player, command, "games",
+                    new String[] {"deal", "table", "board", invalid, ""}).isEmpty());
+        }
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {"deal", "table", "board", "x"}).isEmpty());
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {"deal", "table", "invalid", ""}).isEmpty());
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {"deal", "table", "board", "2", "back", ""}).isEmpty());
+        CommandSender console = mock(CommandSender.class);
+        when(console.hasPermission("games.admin")).thenReturn(true);
+        assertTrue(commands.onTabComplete(console, command, "games", new String[] {"deal", "table", "board", ""}).isEmpty());
+        when(player.hasPermission("games.admin")).thenReturn(false);
+        assertTrue(commands.onTabComplete(player, command, "games", new String[] {"deal", "table", "board", ""}).isEmpty());
+    }
+
+    @Test void pokerKickCompletesOnlyOnlineRegistrantsAtAnEditableIdleTournament() {
+        when(player.hasPermission("games.bet")).thenReturn(true);
+        Table poker = new Table(UUID.randomUUID(), "poker", null, 0, null);
+        when(manager.tableNearby(player)).thenReturn(poker);
+        when(manager.canEditHouse(player, poker)).thenReturn(true);
+        Player alice = mock(Player.class), bob = mock(Player.class);
+        when(alice.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(alice.getName()).thenReturn("Alice");
+        when(bob.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(bob.getName()).thenReturn("Bob");
+        try (var bukkit = mockStatic(org.bukkit.Bukkit.class)) {
+            bukkit.when(org.bukkit.Bukkit::getOnlinePlayers).thenReturn(List.of(alice, bob));
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            poker.poker().configure(10, 1000, 0, 0, 0);
+            poker.poker().buy(alice.getUniqueId());
+            poker.poker().buy(UUID.randomUUID()); // An offline registrant has no executable name target.
+            for (String prefix : List.of("", "aL", "Alice")) {
+                assertEquals(List.of("Alice"), commands.onTabComplete(player, command, "games",
+                        new String[] {"POKER", "KICK", prefix}));
+            }
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", "Bob"}).isEmpty());
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", "Alice", ""}).isEmpty());
+            when(manager.canEditHouse(player, poker)).thenReturn(false);
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            when(manager.canEditHouse(player, poker)).thenReturn(true);
+            poker.startSession();
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            poker.clearSession();
+            poker.beginPayout(List.of(), null);
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            when(manager.tableNearby(player)).thenReturn(table);
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            when(manager.tableNearby(player)).thenReturn(null);
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            when(manager.tableNearby(player)).thenReturn(poker);
+            when(player.hasPermission("games.bet")).thenReturn(false);
+            assertTrue(commands.onTabComplete(player, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+            CommandSender console = mock(CommandSender.class);
+            when(console.hasPermission("games.bet")).thenReturn(true);
+            assertTrue(commands.onTabComplete(console, command, "games", new String[] {"poker", "kick", ""}).isEmpty());
+        }
     }
 
     @Test void adminsWithoutHelpOrBetPermissionGetNoSuggestionsForThem() {
