@@ -542,7 +542,8 @@ public class CommandManager implements CommandExecutor, TabCompleter {
                 first.add("poker");
             }
             if (admin) {
-                first.addAll(List.of("reload", "deck", "display", "place", "payout", "session", "deal"));
+                if (sender.hasPermission("games.admin.reload")) first.add("reload");
+                first.addAll(List.of("deck", "display", "place", "payout", "session", "deal"));
             }
             return prefix(first, args[0]);
         }
@@ -556,6 +557,17 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         if (args.length == 2 && args[0].equalsIgnoreCase("poker") && bet) {
             return prefix(List.of("configure", "buyin", "rebuy", "bet", "start", "kick", "finish", "status"), args[1]);
         }
+        if (args.length == 3 && args[0].equalsIgnoreCase("poker") && args[1].equalsIgnoreCase("kick")
+                && bet && sender instanceof Player player) {
+            TableManager manager = TableManager.get();
+            Table table = manager.tableNearby(player);
+            if (table == null || !"poker".equalsIgnoreCase(table.getGameId())
+                    || table.live() || table.isPaying() || !table.poker().enabled()
+                    || !manager.canEditHouse(player, table)) return Collections.emptyList();
+            return prefix(Bukkit.getOnlinePlayers().stream()
+                    .filter(target -> table.poker().registered(target.getUniqueId()))
+                    .map(Player::getName).toList(), args[2]);
+        }
         if (!admin) {
             return Collections.emptyList();
         }
@@ -564,6 +576,18 @@ public class CommandManager implements CommandExecutor, TabCompleter {
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("deal") && args[1].equalsIgnoreCase("table")) {
             return prefix(List.of("board", "dealer"), args[2]);
+        }
+        if (sender instanceof Player && (args.length == 4 || args.length == 5)
+                && args[0].equalsIgnoreCase("deal") && args[1].equalsIgnoreCase("table")
+                && (args[2].equalsIgnoreCase("board") || args[2].equalsIgnoreCase("dealer"))) {
+            if (args.length == 5) {
+                try {
+                    if (Integer.parseInt(args[3]) < 1) return Collections.emptyList();
+                } catch (NumberFormatException ex) {
+                    return Collections.emptyList();
+                }
+            }
+            return prefix(List.of("back"), args[args.length - 1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("session")) {
             return prefix(List.of("start", "stop"), args[1]);
