@@ -210,7 +210,6 @@ public final class PokerGame implements Game {
                     street.acted.clear();
                 }
                 street.capped.add(id);
-                announceAction(table, player, "allin");
             }
             case "fold" -> {
                 street.folded.add(id);
@@ -220,6 +219,9 @@ public final class PokerGame implements Game {
             default -> {
                 return;
             }
+        }
+        if (street.capped.contains(id)) {
+            announceAllIn(table, player);
         }
         street.acted.add(id);
         finishOrAdvance(table, new ArrayList<>(table.actives()), true);
@@ -284,10 +286,17 @@ public final class PokerGame implements Game {
         }
         if (table.live()) {
             lines.add(streetLabel(table.phase()));
+            Street street = streets.get(table.getId());
+            if (street != null) {
+                for (UUID id : table.actives()) {
+                    if (street.capped.contains(id) && !street.folded.contains(id)) {
+                        lines.add(Messages.get("label.holdem_allin", "name", RpNames.of(id)));
+                    }
+                }
+            }
             UUID actor = table.actor();
             if (actor != null) {
                 lines.add(Messages.get("label.turn", "name", RpNames.of(actor)));
-                Street street = streets.get(table.getId());
                 int toCall = street == null ? 0 : Math.max(0, street.currentBet - streetContrib(table, actor));
                 lines.add(Messages.get("label.holdem_tocall", "n", String.valueOf(toCall)));
             }
@@ -801,7 +810,10 @@ public final class PokerGame implements Game {
         if (small > big) street.currentBet = small;
         if (small > 0 || big > 0 || tournament.enabled()) {
             for (Player player : seatedOnline(table)) {
-                if (isAllIn(table, player)) street.capped.add(player.getUniqueId());
+                if (isAllIn(table, player)) {
+                    street.capped.add(player.getUniqueId());
+                    announceAllIn(table, player);
+                }
             }
         }
         return true;
@@ -831,6 +843,14 @@ public final class PokerGame implements Game {
             table.setDealerId(SeatOrder.first(SeatOrder.after(before, id), table.actives()::contains));
         }
         finishOrAdvance(table, before, false);
+    }
+
+    private static void announceAllIn(Table table, Player player) {
+        announceAction(table, player, "allin");
+        player.sendMessage(Messages.get("poker.allin_notice"));
+        if (!table.poker().enabled()) {
+            player.sendMessage(Messages.get("poker.cash_allin_hint"));
+        }
     }
 
     private static void announceAction(Table table, Player player, String action) {

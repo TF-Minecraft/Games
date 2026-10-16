@@ -76,6 +76,9 @@ class MessagesTest {
         assertEquals("Custom Alice", Messages.get("poker.action_called", "name", "Alice"));
         assertTrue(Messages.getRaw("poker.action_allin").contains("{name}"));
         assertFalse(Messages.getRaw("poker.action_allin").equals("poker.action_allin"));
+        assertTrue(Messages.getRaw("poker.allin_notice").contains("betting turns"));
+        assertTrue(Messages.getRaw("poker.cash_allin_hint").contains("/deco toitem"));
+        assertTrue(Messages.getRaw("label.holdem_allin").contains("{name}"));
     }
 
     @Test
