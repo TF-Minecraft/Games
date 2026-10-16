@@ -537,6 +537,60 @@ class PokerGameTest extends GameScenarioFixture {
     }
 
     @Test
+    void cashAllInExplainsSkippedTurnsAndStaysLabelledForTheRestOfTheHand() {
+        start(alice, bob);
+        contribute(bob, 5);
+        broke.add(bob.getUniqueId());
+        act("raise");
+        assertTrue(game.extraLabel(table).lines().anyMatch(line ->
+                line.startsWith("label.holdem_allin") && line.contains(bob.getName())));
+        assertEquals(alice.getUniqueId(), table.actor());
+        contribute(alice, 5);
+        act("call");
+        drain();
+        for (String phase : List.of(PokerGame.FLOP, PokerGame.TURN, PokerGame.RIVER)) {
+            assertEquals(phase, table.phase());
+            assertEquals(alice.getUniqueId(), table.actor());
+            assertTrue(game.extraLabel(table).contains("label.holdem_allin"));
+            act("check");
+            drain();
+        }
+        assertFalse(table.live());
+        assertFalse(game.extraLabel(table).contains("label.holdem_allin"));
+        List<String> heard = new ArrayList<>();
+        for (String line = ((PlayerMock) bob).nextMessage(); line != null; line = ((PlayerMock) bob).nextMessage()) {
+            heard.add(line);
+        }
+        assertEquals(1, heard.stream().filter(line -> line.startsWith("poker.action_allin")).count());
+        assertEquals(1, heard.stream().filter(line -> line.equals("poker.allin_notice")).count());
+        assertEquals(1, heard.stream().filter(line -> line.equals("poker.cash_allin_hint")).count());
+        for (String line = ((PlayerMock) alice).nextMessage(); line != null; line = ((PlayerMock) alice).nextMessage()) {
+            assertNotEquals("poker.allin_notice", line, "only the all-in player receives the personal notice");
+            assertNotEquals("poker.cash_allin_hint", line);
+        }
+    }
+
+    @Test
+    void explicitTournamentAllInIsAnnouncedOnceWithoutCashAdvice() {
+        table.poker().configure(10, 10, 0, 0, 0);
+        table.poker().buy(alice.getUniqueId());
+        table.poker().buy(bob.getUniqueId());
+        start(alice, bob);
+        act("allin");
+        assertEquals(0, table.poker().stack(bob.getUniqueId()));
+        assertEquals(alice.getUniqueId(), table.actor());
+        assertTrue(game.extraLabel(table).lines().anyMatch(line ->
+                line.startsWith("label.holdem_allin") && line.contains(bob.getName())));
+        List<String> heard = new ArrayList<>();
+        for (String line = ((PlayerMock) bob).nextMessage(); line != null; line = ((PlayerMock) bob).nextMessage()) {
+            heard.add(line);
+        }
+        assertEquals(1, heard.stream().filter(line -> line.startsWith("poker.action_allin")).count());
+        assertEquals(1, heard.stream().filter(line -> line.equals("poker.allin_notice")).count());
+        assertFalse(heard.contains("poker.cash_allin_hint"));
+    }
+
+    @Test
     void allInSeatIsSkippedWhileTheOthersKeepRaising() {
         start(alice, bob, carol);
         contribute(bob, 10);
