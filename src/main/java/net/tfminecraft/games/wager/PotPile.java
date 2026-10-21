@@ -22,6 +22,8 @@ public final class PotPile {
     private double z;
     private final double homeX;
     private final double homeZ;
+    private Double stakeX;
+    private Double stakeZ;
     private final List<UUID> tokens = new ArrayList<>();
     private final List<Float> layerYaws = new ArrayList<>();
 
@@ -100,6 +102,20 @@ public final class PotPile {
 
     public double homeZ() {
         return homeZ;
+    }
+
+    /** The spot of the stake this pile draws, or null when the layout placed that stake. */
+    public Double stakeX() {
+        return stakeX;
+    }
+
+    public Double stakeZ() {
+        return stakeZ;
+    }
+
+    public void setStakeSpot(double x, double z) {
+        stakeX = x;
+        stakeZ = z;
     }
 
     public List<UUID> tokens() {

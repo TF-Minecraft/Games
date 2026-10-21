@@ -1594,7 +1594,8 @@ public final class TableManager implements Listener, WagerHost {
         }
         Location anchor = boxLocation(table, owner);
         boolean tray = owner.equals(table.getId());
-        List<FeltClearance.Footprint> cards = feltCards(table);
+        List<PotPile> others = new ArrayList<>(table.getPiles());
+        List<PotPile> fresh = new ArrayList<>();
         int slot = 0;
         for (Stake stake : table.ledger().stakes(owner)) {
             ItemStack one = stake.item().clone();
@@ -1618,13 +1619,22 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
-                stepOffCards(table, pile, cards);
-                if (!rebuildPile(table, pile)) {
-                    despawnPile(pile);
-                    return;
+                if (spot != null) {
+                    pile.setStakeSpot(spot.getX(), spot.getZ());
                 }
+                // Listed before it is drawn, so the next tray slot sees this one taken.
                 table.getPiles().add(pile);
+                fresh.add(pile);
                 left -= add;
+            }
+        }
+        placeOffCards(table, fresh, others, feltCards(table));
+        for (int i = 0; i < fresh.size(); i++) {
+            PotPile pile = fresh.get(i);
+            if (!rebuildPile(table, pile)) {
+                despawnPile(pile);
+                table.getPiles().removeAll(fresh.subList(i, fresh.size()));
+                return;
             }
         }
     }
@@ -1681,25 +1691,53 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
-    /** Draw the pile at the closest spot to its home that leaves every card showing. */
-    private static void stepOffCards(Table table, PotPile pile, List<FeltClearance.Footprint> cards) {
-        double[] spot = clearSpot(table, pile.homeX(), pile.homeZ(), cards);
-        pile.setX(spot[0]);
-        pile.setZ(spot[1]);
+    /**
+     * Where each fresh pile is drawn. A pile whose home leaves every card showing stays there.
+     * The rest go to the closest spot that does, a spread step from {@code fixed} and from every
+     * pile already placed, so two heaps pushed off the same card never land on one spot.
+     */
+    private static void placeOffCards(Table table, List<PotPile> fresh, List<PotPile> fixed,
+            List<FeltClearance.Footprint> cards) {
+        List<PotPile> placed = new ArrayList<>(fixed);
+        List<PotPile> blocked = new ArrayList<>();
+        for (PotPile pile : fresh) {
+            pile.setX(pile.homeX());
+            pile.setZ(pile.homeZ());
+            if (FeltClearance.clear(pile.homeX(), pile.homeZ(), cards, Cache.wagerCardGap)) {
+                placed.add(pile);
+            } else {
+                blocked.add(pile);
+            }
+        }
+        for (PotPile pile : blocked) {
+            double[] spot = clearSpot(table, pile, cards, placed);
+            pile.setX(spot[0]);
+            pile.setZ(spot[1]);
+            placed.add(pile);
+        }
     }
 
     /**
-     * Clear of the cards, out of the shoe, and on the same kind of ground as home: a tray pile
-     * stays in the tray, a felt pile stays on the felt and out of the tray.
+     * Clear of the cards and of the other piles, out of the shoe, and on the same kind of ground
+     * as home: a tray pile stays in the tray, a felt pile stays on the felt and out of the tray.
      */
-    private static double[] clearSpot(Table table, double x, double z, List<FeltClearance.Footprint> cards) {
+    private static double[] clearSpot(Table table, PotPile pile, List<FeltClearance.Footprint> cards,
+            List<PotPile> others) {
+        double x = pile.homeX();
+        double z = pile.homeZ();
         Location home = table.getOrigin().clone();
         home.setX(x);
         home.setZ(z);
         boolean tray = inTrayZone(table, home);
         boolean felt = !tray && onFelt(table, home);
         Location probe = home.clone();
+        double spacing = pileSpacing();
         return FeltClearance.nearestClear(x, z, cards, Cache.wagerCardGap, (cx, cz) -> {
+            for (PotPile other : others) {
+                if (other != pile && Math.hypot(other.x() - cx, other.z() - cz) < spacing) {
+                    return false;
+                }
+            }
             probe.setX(cx);
             probe.setZ(cz);
             if (inShoeZone(table, probe)) {
@@ -1713,20 +1751,28 @@ public final class TableManager implements Listener, WagerHost {
         });
     }
 
+    /** How far apart neighbouring heaps are laid out, the same step a spilling stake uses. */
+    private static double pileSpacing() {
+        return Math.max(0.12, Cache.wagerMergeRange);
+    }
+
     /** Cards came or went: redraw each pile whose clear spot moved, keeping how its chips lie. */
     private void stepPilesOffCards(Table table) {
         if (table.getPiles().isEmpty()) {
             return;
         }
-        List<FeltClearance.Footprint> cards = feltCards(table);
-        for (PotPile pile : new ArrayList<>(table.getPiles())) {
-            double[] spot = clearSpot(table, pile.homeX(), pile.homeZ(), cards);
-            if (Math.abs(spot[0] - pile.x()) < 1e-6 && Math.abs(spot[1] - pile.z()) < 1e-6) {
+        List<PotPile> piles = new ArrayList<>(table.getPiles());
+        Map<PotPile, double[]> was = new IdentityHashMap<>();
+        for (PotPile pile : piles) {
+            was.put(pile, new double[] {pile.x(), pile.z()});
+        }
+        placeOffCards(table, piles, List.of(), feltCards(table));
+        for (PotPile pile : piles) {
+            double[] old = was.get(pile);
+            if (Math.abs(old[0] - pile.x()) < 1e-6 && Math.abs(old[1] - pile.z()) < 1e-6) {
                 continue;
             }
             despawnPile(pile);
-            pile.setX(spot[0]);
-            pile.setZ(spot[1]);
             if (!rebuildPile(table, pile)) {
                 despawnPile(pile);
                 table.getPiles().remove(pile);
@@ -1735,8 +1781,9 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     /**
-     * A click on a pile drawn beside a card adds to that pile, so the spot is the pile's home,
-     * where its stake lives. Anywhere else the click is the spot, as before.
+     * A click on a pile drawn beside a card adds to that pile, so the spot is where its stake
+     * lives (the pile's home when the layout placed that stake). Anywhere else the click is the
+     * spot, as before.
      */
     private static Location spotFor(Table table, UUID bucket, ItemStack one, Location hit) {
         double range = Cache.wagerMergeRange;
@@ -1747,8 +1794,8 @@ public final class TableManager implements Listener, WagerHost {
             }
             if (Math.hypot(pile.x() - hit.getX(), pile.z() - hit.getZ()) <= range) {
                 Location home = hit.clone();
-                home.setX(pile.homeX());
-                home.setZ(pile.homeZ());
+                home.setX(pile.stakeX() != null ? pile.stakeX() : pile.homeX());
+                home.setZ(pile.stakeZ() != null ? pile.stakeZ() : pile.homeZ());
                 return home;
             }
         }
@@ -1774,7 +1821,7 @@ public final class TableManager implements Listener, WagerHost {
         if (index <= 0) {
             return anchor.clone();
         }
-        double step = Math.max(0.12, Cache.wagerMergeRange);
+        double step = pileSpacing();
         int[] walk = spiralStep(index);
         double forward = TableLayout.localForward(table, anchor) + walk[1] * step;
         double right = TableLayout.localRight(table, anchor) + walk[0] * step;
@@ -1821,7 +1868,7 @@ public final class TableManager implements Listener, WagerHost {
             return tray.clone();
         }
         TableLayout.PileSlot origin = layout.pile("tray");
-        double step = Math.max(0.12, Cache.wagerMergeRange);
+        double step = pileSpacing();
         int[] walk = spiralStep(index);
         return TableLayout.fromLocal(table, origin.forward() + walk[1] * step, origin.right() + walk[0] * step);
     }
@@ -2498,7 +2545,7 @@ public final class TableManager implements Listener, WagerHost {
         if (!Cache.wagerShowChips) {
             return flights;
         }
-        List<FeltClearance.Footprint> cards = feltCards(table);
+        List<PotPile> fresh = new ArrayList<>();
         int slot = 0;
         for (Stake stake : stakes) {
             ItemStack one = stake.item().clone();
@@ -2519,15 +2566,19 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
-                // Chips fly off from where the heap is drawn, which may be beside a card.
-                stepOffCards(table, pile, cards);
-                if (!rebuildPile(table, pile)) {
-                    despawnPile(pile);
-                    return flights;
-                }
-                flights.add(toTray ? PayoutFlight.toTray(pile) : new PayoutFlight(pile, destId));
+                fresh.add(pile);
                 left -= add;
             }
+        }
+        // Chips fly off from where the heap is drawn, which may be beside a card. The heaps
+        // paying out are still drawn, so flights only keep apart from each other.
+        placeOffCards(table, fresh, List.of(), feltCards(table));
+        for (PotPile pile : fresh) {
+            if (!rebuildPile(table, pile)) {
+                despawnPile(pile);
+                return flights;
+            }
+            flights.add(toTray ? PayoutFlight.toTray(pile) : new PayoutFlight(pile, destId));
         }
         return flights;
     }

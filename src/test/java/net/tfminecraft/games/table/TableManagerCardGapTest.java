@@ -194,6 +194,53 @@ class TableManagerCardGapTest extends TableManagerFixture {
         }
     }
 
+    /** A stake too tall for one stack, put on the board card: it spills into several heaps. */
+    private List<PotPile> spilledOntoCard(Table table, Location card) {
+        Cache.wagerGold = new WagerItemOverride("GOLD_NUGGET", 1, null, 3, null, null, false, null, false, null);
+        WagerEngine.get().restore(table, player.getUniqueId(), new ItemStack(Material.GOLD_NUGGET), "gold", 1,
+                120, table.street(), null, null, card.getX(), card.getZ());
+        manager.syncAllChips(table);
+        List<PotPile> piles = new ArrayList<>(table.getPiles());
+        assertTrue(piles.size() >= 3, "The stake spills: " + piles.size());
+        return piles;
+    }
+
+    @Test void heapsSpilledOntoACardStepOffItWithoutLandingOnEachOther() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        List<PotPile> piles = spilledOntoCard(table, card);
+        for (int i = 0; i < piles.size(); i++) {
+            PotPile pile = piles.get(i);
+            assertTrue(FeltClearance.clear(pile.x(), pile.z(), List.of(footprint(table)), GAP));
+            for (int j = i + 1; j < piles.size(); j++) {
+                PotPile other = piles.get(j);
+                assertTrue(Math.hypot(pile.x() - other.x(), pile.z() - other.z()) >= 0.12 - 1e-9,
+                        "Heaps " + i + " and " + j + " are drawn apart");
+            }
+        }
+        // Cards changing again keeps them apart and where they were.
+        List<List<Double>> before = piles.stream().map(p -> List.of(p.x(), p.z())).toList();
+        manager.rebuildCardStacks(table);
+        assertEquals(before, table.getPiles().stream().map(p -> List.of(p.x(), p.z())).toList());
+    }
+
+    @Test void clickingASpilledHeapBesideACardAddsToItsStake() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        PotPile spill = spilledOntoCard(table, card).stream()
+                .filter(p -> Math.hypot(p.homeX() - card.getX(), p.homeZ() - card.getZ()) > Cache.wagerMergeRange)
+                .findFirst().orElseThrow();
+        assertNotEquals(spill.homeX(), spill.x(), 1e-9);
+        Location visible = card.clone();
+        visible.setX(spill.x());
+        visible.setZ(spill.z());
+
+        stakeAt(player, visible);
+        List<Stake> stakes = table.ledger().stakes(player.getUniqueId());
+        assertEquals(1, stakes.size());
+        assertEquals(121, stakes.getFirst().count());
+    }
+
     @Test void aZeroGapLetsCoinsSitOnCardsAsBefore() {
         Cache.wagerCardGap = 0;
         Table table = place(false);
