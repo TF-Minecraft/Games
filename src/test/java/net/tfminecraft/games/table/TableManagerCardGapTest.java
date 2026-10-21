@@ -241,6 +241,51 @@ class TableManagerCardGapTest extends TableManagerFixture {
         assertEquals(121, stakes.getFirst().count());
     }
 
+    private PotPile pileOf(Table table, UUID owner) {
+        List<PotPile> piles = table.getPiles().stream().filter(p -> owner.equals(p.ownerId())).toList();
+        assertEquals(1, piles.size());
+        return piles.getFirst();
+    }
+
+    @Test void aHeapPushedOffACardStepsAsideForAnotherBucketsHeapAtItsOwnHome() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        stakeAt(player, card);
+        PotPile pushed = pileOf(table, player.getUniqueId());
+        Location drawn = card.clone();
+        drawn.setX(pushed.x());
+        drawn.setZ(pushed.z());
+
+        PlayerMock other = opponent();
+        stakeAt(other, drawn);
+        PotPile theirs = pileOf(table, other.getUniqueId());
+        assertAt(drawn, theirs.x(), theirs.z());
+        PotPile mine = pileOf(table, player.getUniqueId());
+        assertTrue(Math.hypot(mine.x() - theirs.x(), mine.z() - theirs.z()) >= 0.12 - 1e-9,
+                "The two heaps are drawn apart");
+        assertTrue(FeltClearance.clear(mine.x(), mine.z(), List.of(footprint(table)), GAP));
+        assertFalse(mine.tokens().isEmpty());
+    }
+
+    @Test void aRefundFliesFromWhereTheHeapIsDrawn() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        stakeAt(player, card);
+        PlayerMock other = opponent();
+        stakeAt(other, card);
+        PotPile mine = pileOf(table, player.getUniqueId());
+        PotPile theirs = pileOf(table, other.getUniqueId());
+        assertTrue(Math.hypot(mine.x() - theirs.x(), mine.z() - theirs.z()) >= 0.12 - 1e-9);
+        double x = theirs.x();
+        double z = theirs.z();
+
+        List<PayoutFlight> flights = new ArrayList<>();
+        assertEquals(1, WagerEngine.get().refund(table, other.getUniqueId(), other, 0, flights, "return bet").moved());
+        assertEquals(1, flights.size());
+        assertEquals(x, flights.getFirst().pile().x(), 1e-9);
+        assertEquals(z, flights.getFirst().pile().z(), 1e-9);
+    }
+
     @Test void aZeroGapLetsCoinsSitOnCardsAsBefore() {
         Cache.wagerCardGap = 0;
         Table table = place(false);

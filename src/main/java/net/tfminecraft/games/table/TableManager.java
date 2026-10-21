@@ -177,9 +177,9 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     @Override
-    public List<PayoutFlight> flights(Table table, List<Stake> stakes, Location from, UUID destId,
+    public List<PayoutFlight> flights(Table table, List<Stake> stakes, Location from, UUID sourceOwner, UUID destId,
             boolean toTray) {
-        return makeFlights(table, stakes, from, destId, toTray);
+        return makeFlights(table, stakes, from, sourceOwner, destId, toTray);
     }
 
     public void startClock() {
@@ -1594,8 +1594,6 @@ public final class TableManager implements Listener, WagerHost {
         }
         Location anchor = boxLocation(table, owner);
         boolean tray = owner.equals(table.getId());
-        List<PotPile> others = new ArrayList<>(table.getPiles());
-        List<PotPile> fresh = new ArrayList<>();
         int slot = 0;
         for (Stake stake : table.ledger().stakes(owner)) {
             ItemStack one = stake.item().clone();
@@ -1624,19 +1622,12 @@ public final class TableManager implements Listener, WagerHost {
                 }
                 // Listed before it is drawn, so the next tray slot sees this one taken.
                 table.getPiles().add(pile);
-                fresh.add(pile);
                 left -= add;
             }
         }
-        placeOffCards(table, fresh, others, feltCards(table));
-        for (int i = 0; i < fresh.size(); i++) {
-            PotPile pile = fresh.get(i);
-            if (!rebuildPile(table, pile)) {
-                despawnPile(pile);
-                table.getPiles().removeAll(fresh.subList(i, fresh.size()));
-                return;
-            }
-        }
+        // Every pile is placed again: a fresh heap at its own clear home can stand where another
+        // bucket's heap was pushed off a card, and that heap steps aside.
+        stepPilesOffCards(table);
     }
 
     /** Redraw every bucket, for load, chunk load, and the show-chips toggle. */
@@ -1751,12 +1742,31 @@ public final class TableManager implements Listener, WagerHost {
         });
     }
 
+    /** The source bucket's drawn heap laid out where this flight is, not yet claimed by another flight. */
+    private static PotPile drawnSource(Table table, UUID sourceOwner, PotPile flight, Set<PotPile> used) {
+        if (sourceOwner == null) {
+            return null;
+        }
+        for (PotPile pile : table.getPiles()) {
+            if (sourceOwner.equals(pile.ownerId()) && !used.contains(pile)
+                    && Math.abs(pile.homeX() - flight.homeX()) < 1e-9 && Math.abs(pile.homeZ() - flight.homeZ()) < 1e-9
+                    && pile.item().isSimilar(flight.item())) {
+                used.add(pile);
+                return pile;
+            }
+        }
+        return null;
+    }
+
     /** How far apart neighbouring heaps are laid out, the same step a spilling stake uses. */
     private static double pileSpacing() {
         return Math.max(0.12, Cache.wagerMergeRange);
     }
 
-    /** Cards came or went: redraw each pile whose clear spot moved, keeping how its chips lie. */
+    /**
+     * Place every pile again and draw the ones that moved or were never drawn. A pile that only
+     * moved keeps how its chips lie. Runs when cards come or go and when a bucket is laid out.
+     */
     private void stepPilesOffCards(Table table) {
         if (table.getPiles().isEmpty()) {
             return;
@@ -1769,7 +1779,8 @@ public final class TableManager implements Listener, WagerHost {
         placeOffCards(table, piles, List.of(), feltCards(table));
         for (PotPile pile : piles) {
             double[] old = was.get(pile);
-            if (Math.abs(old[0] - pile.x()) < 1e-6 && Math.abs(old[1] - pile.z()) < 1e-6) {
+            if (!pile.tokens().isEmpty()
+                    && Math.abs(old[0] - pile.x()) < 1e-6 && Math.abs(old[1] - pile.z()) < 1e-6) {
                 continue;
             }
             despawnPile(pile);
@@ -2539,13 +2550,16 @@ public final class TableManager implements Listener, WagerHost {
      * so the flight can throw them away when it lands. Every stake handed over here holds at
      * least one real coin, since withdrawals never yield empty parts.
      */
-    private List<PayoutFlight> makeFlights(Table table, List<Stake> stakes, Location from, UUID destId,
-            boolean toTray) {
+    private List<PayoutFlight> makeFlights(Table table, List<Stake> stakes, Location from, UUID sourceOwner,
+            UUID destId, boolean toTray) {
         List<PayoutFlight> flights = new ArrayList<>();
         if (!Cache.wagerShowChips) {
             return flights;
         }
+        List<PotPile> flying = new ArrayList<>();
         List<PotPile> fresh = new ArrayList<>();
+        List<PotPile> matched = new ArrayList<>();
+        Set<PotPile> used = Collections.newSetFromMap(new IdentityHashMap<>());
         int slot = 0;
         for (Stake stake : stakes) {
             ItemStack one = stake.item().clone();
@@ -2566,14 +2580,21 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
-                fresh.add(pile);
+                // Chips fly off from where the heap paying them is drawn, which may be beside a card.
+                PotPile source = drawnSource(table, sourceOwner, pile, used);
+                if (source != null) {
+                    pile.setX(source.x());
+                    pile.setZ(source.z());
+                    matched.add(pile);
+                } else {
+                    fresh.add(pile);
+                }
+                flying.add(pile);
                 left -= add;
             }
         }
-        // Chips fly off from where the heap is drawn, which may be beside a card. The heaps
-        // paying out are still drawn, so flights only keep apart from each other.
-        placeOffCards(table, fresh, List.of(), feltCards(table));
-        for (PotPile pile : fresh) {
+        placeOffCards(table, fresh, matched, feltCards(table));
+        for (PotPile pile : flying) {
             if (!rebuildPile(table, pile)) {
                 despawnPile(pile);
                 return flights;

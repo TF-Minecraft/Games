@@ -225,7 +225,7 @@ class MoneyTxTest {
         when(destination.isTray()).thenReturn(true);
         when(host.anchorFor(table, owner)).thenReturn(anchor);
         PayoutFlight flight = mock(PayoutFlight.class);
-        when(host.flights(table, expectedCoins.get(plan), anchor, target, true)).thenReturn(List.of(flight));
+        when(host.flights(table, expectedCoins.get(plan), anchor, owner, target, true)).thenReturn(List.of(flight));
         List<PayoutFlight> flights = new ArrayList<>();
         TxResult result = tx().move(source, destination, 5).animate(flights).commit();
         assertSame(flights, result.flights());
@@ -239,7 +239,7 @@ class MoneyTxTest {
         List<PayoutFlight> flights = new ArrayList<>();
         assertEquals(5, tx().move(source, destination, 5).animate(flights).commit().moved());
         assertTrue(flights.isEmpty());
-        verify(host, never()).flights(any(), any(), any(), any(), anyBoolean());
+        verify(host, never()).flights(any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test

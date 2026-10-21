@@ -391,8 +391,8 @@ public final class MoneyTx {
                 table.wagerCharacters().putIfAbsent(player.flightTarget(), characters.get(player.flightTarget()));
             table.roundMoney().recordLeg(leg.from, leg.to, coins);
             if (flights != null && from != null) {
-                flights.addAll(host.flights(table, coins, from, leg.to.flightTarget(),
-                        leg.to.isTray()));
+                flights.addAll(host.flights(table, coins, from, leg.from.feltOwner(),
+                        leg.to.flightTarget(), leg.to.isTray()));
             }
             if (leg.from.onFelt()) {
                 touched.add(leg.from.feltOwner());

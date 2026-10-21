@@ -25,7 +25,10 @@ public interface WagerHost {
     /** Redraw the buckets that changed, save the table, and refresh its label. */
     void moneyMoved(Table table, Collection<UUID> buckets);
 
-    /** Throwaway chips for an animation. They hold no value and are dropped when they land. */
-    List<PayoutFlight> flights(Table table, List<Stake> stakes, Location from, UUID destId,
+    /**
+     * Throwaway chips for an animation. They hold no value and are dropped when they land.
+     * {@code sourceOwner} is the bucket they leave, so they can start where its heaps are drawn.
+     */
+    List<PayoutFlight> flights(Table table, List<Stake> stakes, Location from, UUID sourceOwner, UUID destId,
             boolean toTray);
 }
