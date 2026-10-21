@@ -331,6 +331,26 @@ class TableManagerCardGapTest extends TableManagerFixture {
         assertEquals(drawn.get(Material.IRON_NUGGET), List.of(flight.x(), flight.z()));
     }
 
+    @Test void clickingTheMovedHeapOfAStakeNobodyPlacedAddsToThatStake() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        WagerEngine.get().restore(table, player.getUniqueId(), new ItemStack(Material.GOLD_NUGGET), "gold", 1,
+                3, table.street(), card.getX(), card.getZ());
+        manager.syncAllChips(table);
+        PotPile heap = pileOf(table, player.getUniqueId());
+        assertNull(heap.stakeX());
+        assertNotEquals(heap.homeX(), heap.x(), 1e-9);
+        Location visible = card.clone();
+        visible.setX(heap.x());
+        visible.setZ(heap.z());
+
+        stakeAt(player, visible);
+        List<Stake> stakes = table.ledger().stakes(player.getUniqueId());
+        assertEquals(1, stakes.size());
+        assertEquals(4, stakes.getFirst().count());
+        assertFalse(stakes.getFirst().placed());
+    }
+
     @Test void aZeroGapLetsCoinsSitOnCardsAsBefore() {
         Cache.wagerCardGap = 0;
         Table table = place(false);

@@ -15,7 +15,7 @@ public final class FeltClearance {
     /** The face in a card texture: 10 of 16 pixels wide and 14 of 16 tall, centred. */
     static final float FACE_HALF_WIDTH = 5f / 16f;
     static final float FACE_HALF_HEIGHT = 7f / 16f;
-    /** How finely and how far a pile looks for room beside the cards. */
+    /** How finely, and how far past the gap, a pile looks for room beside the cards. */
     static final double STEP = 0.02;
     static final double REACH = 1.0;
     static final int DIRECTIONS = 32;
@@ -95,14 +95,14 @@ public final class FeltClearance {
 
     /**
      * The closest spot to {@code x}/{@code z} that is clear of the cards and that {@code filter}
-     * allows, searched out to {@link #REACH}. The spot itself when it is already clear, and also
-     * when nothing in reach is, so a pile never jumps somewhere arbitrary.
+     * allows, searched out to {@link #REACH} past the gap. The spot itself when it is already
+     * clear, and also when nothing in reach is, so a pile never jumps somewhere arbitrary.
      */
     public static double[] nearestClear(double x, double z, List<Footprint> cards, double gap, SpotFilter filter) {
         if (cards.isEmpty() || gap <= 0 || clear(x, z, cards, gap)) {
             return new double[] {x, z};
         }
-        int rings = (int) Math.round(REACH / STEP);
+        int rings = (int) Math.round((REACH + gap) / STEP);
         for (int ring = 1; ring <= rings; ring++) {
             double radius = ring * STEP;
             for (int i = 0; i < DIRECTIONS; i++) {

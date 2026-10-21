@@ -95,6 +95,13 @@ class FeltClearanceTest {
     }
 
     @Test
+    void aWideGapStillFindsRoom() {
+        List<Footprint> cards = List.of(card(0, 0, 0));
+        double[] spot = FeltClearance.nearestClear(0, 0, cards, 0.9, (x, z) -> true);
+        assertTrue(FeltClearance.clear(spot[0], spot[1], cards, 0.9), Arrays.toString(spot));
+    }
+
+    @Test
     void aPileStaysWhereItIsWhenItIsClearOrHasNowhereToGo() {
         List<Footprint> cards = List.of(card(0, 0, 0));
         assertArrayEquals(new double[] {0.5, 0}, FeltClearance.nearestClear(0.5, 0, cards, 0.1, (x, z) -> false));

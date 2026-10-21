@@ -1805,9 +1805,9 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     /**
-     * A click on a pile drawn beside a card adds to that pile, so the spot is where its stake
-     * lives (the pile's home when the layout placed that stake). Anywhere else the click is the
-     * spot, as before.
+     * A click on a pile drawn beside a card adds to that pile: the spot is where its stake was
+     * put, or null (no spot, so the coins join that stake) when the layout placed it. Anywhere
+     * else the click is the spot, as before.
      */
     private static Location spotFor(Table table, UUID bucket, ItemStack one, Location hit) {
         double range = Cache.wagerMergeRange;
@@ -1817,9 +1817,12 @@ public final class TableManager implements Listener, WagerHost {
                 continue;
             }
             if (Math.hypot(pile.x() - hit.getX(), pile.z() - hit.getZ()) <= range) {
+                if (pile.stakeX() == null || pile.stakeZ() == null) {
+                    return null;
+                }
                 Location home = hit.clone();
-                home.setX(pile.stakeX() != null ? pile.stakeX() : pile.homeX());
-                home.setZ(pile.stakeZ() != null ? pile.stakeZ() : pile.homeZ());
+                home.setX(pile.stakeX());
+                home.setZ(pile.stakeZ());
                 return home;
             }
         }
