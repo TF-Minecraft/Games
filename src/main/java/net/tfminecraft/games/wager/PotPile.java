@@ -20,6 +20,8 @@ public final class PotPile {
     private int streetId;
     private double x;
     private double z;
+    private final double homeX;
+    private final double homeZ;
     private final List<UUID> tokens = new ArrayList<>();
     private final List<Float> layerYaws = new ArrayList<>();
 
@@ -30,6 +32,8 @@ public final class PotPile {
         this.denars = denars;
         this.x = x;
         this.z = z;
+        this.homeX = x;
+        this.homeZ = z;
     }
 
     /** Which bucket this pile draws. The table id means the house tray. */
@@ -87,6 +91,15 @@ public final class PotPile {
 
     public void setZ(double z) {
         this.z = z;
+    }
+
+    /** Where the layout put this pile. It is drawn at {@link #x()}/{@link #z()}, which steps off any card there. */
+    public double homeX() {
+        return homeX;
+    }
+
+    public double homeZ() {
+        return homeZ;
     }
 
     public List<UUID> tokens() {

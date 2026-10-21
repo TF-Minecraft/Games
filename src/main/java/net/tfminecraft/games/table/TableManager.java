@@ -82,6 +82,7 @@ import net.tfminecraft.games.game.GamesRegistry;
 import net.tfminecraft.games.game.LiveCardReturns;
 import net.tfminecraft.games.guild.GuildTables;
 import net.tfminecraft.games.select.CardSelector;
+import net.tfminecraft.games.layout.FeltClearance;
 import net.tfminecraft.games.layout.HandAnchor;
 import net.tfminecraft.games.layout.HandLayout;
 import net.tfminecraft.games.layout.RevealLayout;
@@ -1048,6 +1049,7 @@ public final class TableManager implements Listener, WagerHost {
     void rebuildCardStacks(Table table) {
         rebuildShoeStack(table);
         rebuildDiscardStack(table);
+        stepPilesOffCards(table);
     }
 
     private void rebuildShoeStack(Table table) {
@@ -1592,6 +1594,7 @@ public final class TableManager implements Listener, WagerHost {
         }
         Location anchor = boxLocation(table, owner);
         boolean tray = owner.equals(table.getId());
+        List<FeltClearance.Footprint> cards = feltCards(table);
         int slot = 0;
         for (Stake stake : table.ledger().stakes(owner)) {
             ItemStack one = stake.item().clone();
@@ -1615,6 +1618,7 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
+                stepOffCards(table, pile, cards);
                 if (!rebuildPile(table, pile)) {
                     despawnPile(pile);
                     return;
@@ -1643,6 +1647,112 @@ public final class TableManager implements Listener, WagerHost {
                 table.getPiles().remove(pile);
             }
         }
+    }
+
+    /**
+     * Cards lying on the felt that chips must not cover: the shoe, the discard and the public
+     * piles. Every layer of a stack has the same outline, so its bottom layer stands for all.
+     */
+    private static List<FeltClearance.Footprint> feltCards(Table table) {
+        List<FeltClearance.Footprint> cards = new ArrayList<>();
+        if (Cache.wagerCardGap <= 0) {
+            return cards;
+        }
+        DisplayManager displays = DisplayManager.get();
+        if (!table.getStackTokens().isEmpty()) {
+            addFootprint(cards, displays, table.getStackTokens().get(0));
+        }
+        if (!table.getDiscardTokens().isEmpty()) {
+            addFootprint(cards, displays, table.getDiscardTokens().get(0));
+        }
+        for (List<HandCard> pile : table.tablePiles().values()) {
+            for (HandCard held : pile) {
+                addFootprint(cards, displays, held.tokenId());
+            }
+        }
+        return cards;
+    }
+
+    private static void addFootprint(List<FeltClearance.Footprint> cards, DisplayManager displays, UUID token) {
+        Location at = displays.worldLocation(token);
+        DisplayPose pose = displays.poseOf(token);
+        if (at != null && pose != null) {
+            cards.add(FeltClearance.footprint(at.getX(), at.getZ(), pose));
+        }
+    }
+
+    /** Draw the pile at the closest spot to its home that leaves every card showing. */
+    private static void stepOffCards(Table table, PotPile pile, List<FeltClearance.Footprint> cards) {
+        double[] spot = clearSpot(table, pile.homeX(), pile.homeZ(), cards);
+        pile.setX(spot[0]);
+        pile.setZ(spot[1]);
+    }
+
+    /**
+     * Clear of the cards, out of the shoe, and on the same kind of ground as home: a tray pile
+     * stays in the tray, a felt pile stays on the felt and out of the tray.
+     */
+    private static double[] clearSpot(Table table, double x, double z, List<FeltClearance.Footprint> cards) {
+        Location home = table.getOrigin().clone();
+        home.setX(x);
+        home.setZ(z);
+        boolean tray = inTrayZone(table, home);
+        boolean felt = !tray && onFelt(table, home);
+        Location probe = home.clone();
+        return FeltClearance.nearestClear(x, z, cards, Cache.wagerCardGap, (cx, cz) -> {
+            probe.setX(cx);
+            probe.setZ(cz);
+            if (inShoeZone(table, probe)) {
+                return false;
+            }
+            boolean inTray = inTrayZone(table, probe);
+            if (tray || inTray) {
+                return tray && inTray;
+            }
+            return !felt || onFelt(table, probe);
+        });
+    }
+
+    /** Cards came or went: redraw each pile whose clear spot moved, keeping how its chips lie. */
+    private void stepPilesOffCards(Table table) {
+        if (table.getPiles().isEmpty()) {
+            return;
+        }
+        List<FeltClearance.Footprint> cards = feltCards(table);
+        for (PotPile pile : new ArrayList<>(table.getPiles())) {
+            double[] spot = clearSpot(table, pile.homeX(), pile.homeZ(), cards);
+            if (Math.abs(spot[0] - pile.x()) < 1e-6 && Math.abs(spot[1] - pile.z()) < 1e-6) {
+                continue;
+            }
+            despawnPile(pile);
+            pile.setX(spot[0]);
+            pile.setZ(spot[1]);
+            if (!rebuildPile(table, pile)) {
+                despawnPile(pile);
+                table.getPiles().remove(pile);
+            }
+        }
+    }
+
+    /**
+     * A click on a pile drawn beside a card adds to that pile, so the spot is the pile's home,
+     * where its stake lives. Anywhere else the click is the spot, as before.
+     */
+    private static Location spotFor(Table table, UUID bucket, ItemStack one, Location hit) {
+        double range = Cache.wagerMergeRange;
+        for (PotPile pile : table.getPiles()) {
+            boolean moved = pile.x() != pile.homeX() || pile.z() != pile.homeZ();
+            if (!moved || !bucket.equals(pile.ownerId()) || !pile.item().isSimilar(one)) {
+                continue;
+            }
+            if (Math.hypot(pile.x() - hit.getX(), pile.z() - hit.getZ()) <= range) {
+                Location home = hit.clone();
+                home.setX(pile.homeX());
+                home.setZ(pile.homeZ());
+                return home;
+            }
+        }
+        return hit;
     }
 
     /**
@@ -1723,8 +1833,9 @@ public final class TableManager implements Listener, WagerHost {
             if (!isTrayPile(table, pile)) {
                 continue;
             }
-            double dx = pile.x() - slot.getX();
-            double dz = pile.z() - slot.getZ();
+            // A slot is where a pile was laid out, even when a card has it drawn beside the slot.
+            double dx = pile.homeX() - slot.getX();
+            double dz = pile.homeZ() - slot.getZ();
             if (dx * dx + dz * dz <= maxSq) {
                 return true;
             }
@@ -2175,6 +2286,7 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void notifyTablePiles(Table table) {
+        stepPilesOffCards(table);
         Game game = gameOf(table);
         if (game != null) {
             game.onTablePilesChanged(table);
@@ -2386,6 +2498,7 @@ public final class TableManager implements Listener, WagerHost {
         if (!Cache.wagerShowChips) {
             return flights;
         }
+        List<FeltClearance.Footprint> cards = feltCards(table);
         int slot = 0;
         for (Stake stake : stakes) {
             ItemStack one = stake.item().clone();
@@ -2406,6 +2519,8 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
+                // Chips fly off from where the heap is drawn, which may be beside a card.
+                stepOffCards(table, pile, cards);
                 if (!rebuildPile(table, pile)) {
                     despawnPile(pile);
                     return flights;
@@ -2778,7 +2893,7 @@ public final class TableManager implements Listener, WagerHost {
         // a wager that cannot be placed never eats the loot.
         TxResult staked = wager().begin(table, dealerTray ? "dealer tray loot" : "loot wager")
                 .move(Accounts.declared(table, player, one, denars),
-                        Accounts.bucket(table, bucket).placedAt(at), placeDenars)
+                        Accounts.bucket(table, bucket).placedAt(spotFor(table, bucket, one, at)), placeDenars)
                 .commit();
         // A refused transaction moves nothing, so the amount alone says whether it happened.
         if (staked.moved() < 1) {
@@ -2919,7 +3034,7 @@ public final class TableManager implements Listener, WagerHost {
         // the player's hand and worth exactly this much, so the movement always goes through.
         wager().begin(table, dealerTray ? "dealer tray" : "bet")
                 .move(Accounts.pockets(table, player, one::isSimilar),
-                        Accounts.bucket(table, bucket).placedAt(hit), denars)
+                        Accounts.bucket(table, bucket).placedAt(spotFor(table, bucket, one, hit)), denars)
                 .commit();
         playChipSound(table, hit);
         if (!dealerTray) {
@@ -3182,7 +3297,7 @@ public final class TableManager implements Listener, WagerHost {
         return boxOwners(table).size();
     }
 
-    /** Draw a freshly laid out pile. Both callers build a new pile, so there is nothing to clear. */
+    /** Draw a laid out pile. Every caller hands over a pile with no displays, so there is nothing to clear. */
     private boolean rebuildPile(Table table, PotPile pile) {
         DisplayManager displays = DisplayManager.get();
         ItemStack visual = pileDisplayItem(pile);

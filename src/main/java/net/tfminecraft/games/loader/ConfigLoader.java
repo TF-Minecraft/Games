@@ -113,6 +113,8 @@ public final class ConfigLoader implements LoaderInterface {
         Cache.wagerYOffset = config.getDouble("wager.y-offset", Cache.wagerYOffset);
         double merge = config.getDouble("wager.merge-range", Cache.wagerMergeRange);
         Cache.wagerMergeRange = merge > 0 ? merge : Cache.wagerMergeRange;
+        double cardGap = config.getDouble("wager.card-gap", Cache.wagerCardGap);
+        Cache.wagerCardGap = cardGap >= 0 ? cardGap : Cache.wagerCardGap;
         int voteSeconds = config.getInt("wager.vote-seconds", Cache.wagerVoteSeconds);
         Cache.wagerVoteSeconds = voteSeconds > 0 ? voteSeconds : Cache.wagerVoteSeconds;
         int placeSeconds = config.getInt("wager.place-seconds", Cache.wagerPlaceSeconds);
