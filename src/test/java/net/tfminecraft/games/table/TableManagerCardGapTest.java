@@ -286,6 +286,51 @@ class TableManagerCardGapTest extends TableManagerFixture {
         assertEquals(z, flights.getFirst().pile().z(), 1e-9);
     }
 
+    @Test void aStreetRefundFliesFromThatStreetsHeap() {
+        Table table = place(false);
+        Location card = boardCard(table);
+        stakeAt(player, card);
+        table.setStreet(2);
+        stakeAt(player, card);
+        List<PotPile> heaps = table.getPiles().stream().filter(p -> player.getUniqueId().equals(p.ownerId())).toList();
+        assertEquals(2, heaps.size());
+        PotPile second = heaps.stream().filter(p -> p.streetId() == 2).findFirst().orElseThrow();
+        double x = second.x();
+        double z = second.z();
+
+        List<PayoutFlight> flights = new ArrayList<>();
+        WagerEngine.get().refundStreet(table, player.getUniqueId(), 2, flights, "street refund");
+        assertEquals(1, flights.size());
+        assertEquals(x, flights.getFirst().pile().x(), 1e-9);
+        assertEquals(z, flights.getFirst().pile().z(), 1e-9);
+    }
+
+    @Test void flightsFromAnUnplacedBucketLeaveFromItsHeapsOfTheirKind() {
+        Cache.wagerSilver = new WagerItemOverride("IRON_NUGGET", 5, null, null, null, null,
+                null, null, false, null);
+        Table table = place(false);
+        Location card = boardCard(table);
+        // Anchored on the card but never placed: the bucket lays both kinds out around the anchor.
+        WagerEngine.get().restore(table, player.getUniqueId(), new ItemStack(Material.GOLD_NUGGET), "gold", 1,
+                1, table.street(), card.getX(), card.getZ());
+        WagerEngine.get().restore(table, player.getUniqueId(), new ItemStack(Material.IRON_NUGGET), "silver", 5,
+                1, table.street(), card.getX(), card.getZ());
+        manager.syncAllChips(table);
+        Map<Material, List<Double>> drawn = new HashMap<>();
+        for (PotPile pile : table.getPiles()) drawn.put(pile.item().getType(), List.of(pile.x(), pile.z()));
+        assertEquals(2, drawn.size());
+
+        // Restored money is bound to the character it was staked by, as a load would.
+        table.wagerCharacters().put(player.getUniqueId(), net.tfminecraft.games.support.TestCharacters.ref(player));
+        List<PayoutFlight> flights = new ArrayList<>();
+        // Only the second kind leaves, so its flight is laid out in a different slot than its heap.
+        assertEquals(5, WagerEngine.get().refund(table, player.getUniqueId(), player, 5, flights, "return bet").moved());
+        assertEquals(1, flights.size());
+        PotPile flight = flights.getFirst().pile();
+        assertEquals(Material.IRON_NUGGET, flight.item().getType());
+        assertEquals(drawn.get(Material.IRON_NUGGET), List.of(flight.x(), flight.z()));
+    }
+
     @Test void aZeroGapLetsCoinsSitOnCardsAsBefore() {
         Cache.wagerCardGap = 0;
         Table table = place(false);

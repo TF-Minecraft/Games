@@ -1742,20 +1742,33 @@ public final class TableManager implements Listener, WagerHost {
         });
     }
 
-    /** The source bucket's drawn heap laid out where this flight is, not yet claimed by another flight. */
+    /**
+     * The source bucket's drawn heap this flight leaves from, not yet claimed by another flight:
+     * the same coin and street, laid out on the same spot. A stake nobody placed is laid out by
+     * its whole bucket, which the withdrawn part does not repeat, so any heap of that kind will do.
+     */
     private static PotPile drawnSource(Table table, UUID sourceOwner, PotPile flight, Set<PotPile> used) {
         if (sourceOwner == null) {
             return null;
         }
+        PotPile loose = null;
         for (PotPile pile : table.getPiles()) {
-            if (sourceOwner.equals(pile.ownerId()) && !used.contains(pile)
-                    && Math.abs(pile.homeX() - flight.homeX()) < 1e-9 && Math.abs(pile.homeZ() - flight.homeZ()) < 1e-9
-                    && pile.item().isSimilar(flight.item())) {
+            if (!sourceOwner.equals(pile.ownerId()) || used.contains(pile)
+                    || pile.streetId() != flight.streetId() || !pile.item().isSimilar(flight.item())) {
+                continue;
+            }
+            if (Math.abs(pile.homeX() - flight.homeX()) < 1e-9 && Math.abs(pile.homeZ() - flight.homeZ()) < 1e-9) {
                 used.add(pile);
                 return pile;
             }
+            if (loose == null && flight.stakeX() == null && pile.stakeX() == null) {
+                loose = pile;
+            }
         }
-        return null;
+        if (loose != null) {
+            used.add(loose);
+        }
+        return loose;
     }
 
     /** How far apart neighbouring heaps are laid out, the same step a spilling stake uses. */
@@ -2580,6 +2593,9 @@ public final class TableManager implements Listener, WagerHost {
                         at.getX(), at.getZ());
                 pile.setPieces(add * per);
                 pile.setStreetId(stake.streetId());
+                if (spot != null) {
+                    pile.setStakeSpot(spot.getX(), spot.getZ());
+                }
                 // Chips fly off from where the heap paying them is drawn, which may be beside a card.
                 PotPile source = drawnSource(table, sourceOwner, pile, used);
                 if (source != null) {
