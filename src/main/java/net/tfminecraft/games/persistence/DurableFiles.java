@@ -42,12 +42,16 @@ public final class DurableFiles {
     }
 
     /**
-     * Publish only when the file does not already hold exactly these bytes. A file with
-     * identical content was already published, so rewriting it would only repeat the flushes.
+     * Publish only when the file does not already hold exactly these bytes. Identical content
+     * still gets its directory entry flushed, in case an earlier write moved it into place but
+     * failed before that flush; on a clean directory this costs next to nothing.
      */
     public static boolean writeIfChanged(Path target, String text) throws IOException {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-        if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), bytes)) return false;
+        if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), bytes)) {
+            sync(target.toAbsolutePath().getParent());
+            return false;
+        }
         write(target, bytes);
         return true;
     }
