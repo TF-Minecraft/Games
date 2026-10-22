@@ -95,6 +95,9 @@ wager:
   random-yaw: false
   # How close a click must be to add onto an existing pile of the same type.
   merge-range: 0.1
+  # Chips are drawn at least this far (blocks, from the pile centre) from the deck, the discard
+  # and the cards dealt to the table, so they never cover them. 0 lets chips sit on cards.
+  card-gap: 0.1
   vote-seconds: 30
   # After loot is accepted, seconds to click the felt with the same item.
   place-seconds: 10

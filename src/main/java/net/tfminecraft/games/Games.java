@@ -158,6 +158,7 @@ public class Games extends JavaPlugin {
                     + " wager.y-offset=" + Cache.wagerYOffset
                     + " wager.random-yaw=" + Cache.wagerRandomYaw
                     + " wager.merge-range=" + Cache.wagerMergeRange
+                    + " wager.card-gap=" + Cache.wagerCardGap
                     + " wager.vote-seconds=" + Cache.wagerVoteSeconds
                     + " wager.place-seconds=" + Cache.wagerPlaceSeconds
                     + " wager.payout-ticks=" + Cache.wagerPayoutTicks

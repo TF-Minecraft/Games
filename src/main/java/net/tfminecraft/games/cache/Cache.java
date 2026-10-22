@@ -70,6 +70,7 @@ public final class Cache {
     public static float wagerItemScale = 0.35f;
     public static boolean wagerRandomYaw = false;
     public static double wagerMergeRange = 0.1;
+    public static double wagerCardGap = 0.1;
     public static double wagerYOffset = 0;
     public static int wagerVoteSeconds = 30;
     public static int wagerPlaceSeconds = 10;
