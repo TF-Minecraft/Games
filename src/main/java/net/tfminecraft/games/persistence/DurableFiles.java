@@ -8,10 +8,26 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Publish whole, flushed files before money or inventory changes. */
 public final class DurableFiles {
+    /** Flushes one directory; tests swap it to count or fail flushes. */
+    interface Syncer {
+        void sync(Path directory) throws IOException;
+    }
+
+    static Syncer syncer = DurableFiles::force;
+
+    // Directories whose whole ancestor chain has been flushed by this process, by file key so a
+    // deleted and recreated folder counts as new. Until then every write flushes all ancestors,
+    // which also covers folders made by mkdirs elsewhere or left behind by a write whose
+    // ancestor flush failed.
+    private static final Set<Object> durableDirectories = ConcurrentHashMap.newKeySet();
+
     private DurableFiles() {}
 
     public static void write(Path target, String text) throws IOException {
@@ -21,8 +37,6 @@ public final class DurableFiles {
     public static void write(Path target, byte[] bytes) throws IOException {
         target = target.toAbsolutePath();
         Path parent = target.getParent();
-        // Only directories this write creates need their entries flushed in their own parents.
-        Path created = firstMissing(parent);
         Files.createDirectories(parent);
         Path temp = Files.createTempFile(parent, ".pending-", ".tmp");
         try {
@@ -32,10 +46,7 @@ public final class DurableFiles {
                 channel.force(true);
             }
             Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            sync(parent);
-            if (created != null)
-                for (Path directory = parent; !directory.equals(created.getParent()); directory = directory.getParent())
-                    sync(directory.getParent());
+            flushEntry(parent);
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -49,7 +60,7 @@ public final class DurableFiles {
     public static boolean writeIfChanged(Path target, String text) throws IOException {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), bytes)) {
-            sync(target.toAbsolutePath().getParent());
+            flushEntry(target.toAbsolutePath().getParent());
             return false;
         }
         write(target, bytes);
@@ -58,17 +69,31 @@ public final class DurableFiles {
 
     public static void delete(Path target) throws IOException {
         Files.deleteIfExists(target);
-        sync(target.getParent());
+        syncer.sync(target.toAbsolutePath().getParent());
     }
 
-    /** The highest ancestor of {@code directory} (or itself) that does not exist yet, or null. */
-    private static Path firstMissing(Path directory) {
-        Path missing = null;
-        for (Path path = directory; path != null && !Files.exists(path); path = path.getParent()) missing = path;
-        return missing;
+    /** Flush a file's directory entry, and its ancestors the first time this process sees it. */
+    private static void flushEntry(Path parent) throws IOException {
+        syncer.sync(parent);
+        Object key = directoryKey(parent);
+        if (durableDirectories.contains(key)) return;
+        for (Path directory = parent.getParent(); directory != null; directory = directory.getParent())
+            syncer.sync(directory);
+        durableDirectories.add(key);
     }
 
-    private static void sync(Path directory) throws IOException {
+    /** The directory's file key (device and inode on Linux), or its path where there is none. */
+    private static Object directoryKey(Path directory) throws IOException {
+        Object key = Files.readAttributes(directory, BasicFileAttributes.class).fileKey();
+        return key != null ? key : directory;
+    }
+
+    /** Test hook: forget which directories were flushed. */
+    static void forgetDurableDirectories() {
+        durableDirectories.clear();
+    }
+
+    private static void force(Path directory) throws IOException {
         try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
             channel.force(true);
         }
