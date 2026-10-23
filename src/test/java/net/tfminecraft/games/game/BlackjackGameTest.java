@@ -310,6 +310,37 @@ class BlackjackGameTest {
     }
 
     @Test
+    void naturalBeatsADealerWhoDrawsToTwentyOne() {
+        start(1, 10, 13, 5, 6);
+        assertEquals(3, table.tablePile("dealer").size());
+        assertEquals(21, BlackjackGame.bestTotal(table.tablePile("dealer")));
+        verifyWin(30);
+        assertMessage(player, "bet.natural");
+    }
+
+    @Test
+    void dealerNaturalBeatsAPlayerWhoDrawsToTwentyOne() {
+        start(5, 1, 6, 13, 10);
+        game.onBetHit(table, player);
+        finishAnimations();
+        assertEquals(21, BlackjackGame.bestTotal(table.handOf(player.getUniqueId())));
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        assertEquals(2, table.tablePile("dealer").size());
+        verify(wagers).refund(eq(table), eq(player.getUniqueId()), eq(dealer), eq(20), anyList(), eq("loss to dealer"));
+        verify(wagers, never()).payWin(any(), any(), any(), anyInt(), any(), anyBoolean(), any(), anyList());
+        assertMessage(player, "bet.lose");
+    }
+
+    @Test
+    void twoNaturalsPush() {
+        start(1, 1, 10, 13);
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        verify(wagers, never()).payWin(any(), any(), any(), anyInt(), any(), anyBoolean(), any(), anyList());
+        verify(wagers).refund(eq(table), eq(player.getUniqueId()), eq(player), eq(0), anyList(), eq("bet returned"));
+        assertMessage(player, "bet.push");
+    }
+
+    @Test
     void equalTotalsReturnStakeWithoutWinPayment() {
         start(10, 10, 8, 8);
         game.onBetStand(table, player);
@@ -441,6 +472,36 @@ class BlackjackGameTest {
         assertEquals(List.of(1, 9), ranks(1));
         assertEquals(BlackjackGame.SETTLE, table.phase());
         verifyWin(40);
+    }
+
+    @Test
+    void splitAceAndTenIsTwentyOneButNotANatural() {
+        start(1, 10, 1, 8, 10, 13);
+        game.onBetSplit(table, player);
+        finishAnimations();
+        assertEquals(List.of(1, 10), ranks(0));
+        assertEquals(List.of(1, 13), ranks(1));
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        verifyWin(40);
+        List<String> messages = new ArrayList<>();
+        String message;
+        while ((message = player.nextMessage()) != null) {
+            messages.add(message);
+        }
+        assertFalse(messages.contains(Messages.get("bet.natural")));
+        assertEquals(2, messages.stream().filter(Messages.get("bet.win")::equals).count());
+    }
+
+    @Test
+    void splitAceAndTenLosesBothStakesToADealerNatural() {
+        start(1, 1, 1, 13, 10, 10);
+        game.onBetSplit(table, player);
+        finishAnimations();
+        assertEquals(List.of(1, 10), ranks(0));
+        assertEquals(List.of(1, 10), ranks(1));
+        assertEquals(BlackjackGame.SETTLE, table.phase());
+        verify(wagers).refund(eq(table), eq(player.getUniqueId()), eq(dealer), eq(40), anyList(), eq("loss to dealer"));
+        verify(wagers, never()).payWin(any(), any(), any(), anyInt(), any(), anyBoolean(), any(), anyList());
     }
 
     @Test

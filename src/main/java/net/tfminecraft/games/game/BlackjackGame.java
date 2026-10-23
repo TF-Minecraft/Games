@@ -1206,8 +1206,10 @@ public final class BlackjackGame implements Game {
         table.setPhase(SETTLE);
         checkBoxBets(table, "settle");
         TableManager manager = TableManager.get();
-        int dealerTotal = bestTotal(table.tablePile(DEALER));
+        List<HandCard> dealerPile = table.tablePile(DEALER);
+        int dealerTotal = bestTotal(dealerPile);
         boolean dealerBust = dealerTotal > 21;
+        boolean dealerNatural = isDealerNatural(dealerPile);
         Player dealer = dealerAtShoe(table);
         Map<UUID, Integer> collect = new HashMap<>();
         Map<UUID, Integer> pay = new HashMap<>();
@@ -1220,12 +1222,14 @@ public final class BlackjackGame implements Game {
             boolean bust = playerTotal > 21 || cards.isEmpty();
             boolean natural = isNatural(hand, cards);
             Player player = Bukkit.getPlayer(hand.owner);
-            if (bust || (!dealerBust && playerTotal < dealerTotal)) {
+            // A natural is settled before any totals: it beats any other 21, and only another
+            // natural draws with it. Every other hand is decided on its total alone.
+            if (bust || (dealerNatural && !natural) || (!dealerBust && playerTotal < dealerTotal)) {
                 collect.merge(hand.owner, hand.bet, Integer::sum);
                 tell(player, Messages.get("bet.lose"));
                 continue;
             }
-            if (!dealerBust && playerTotal == dealerTotal) {
+            if (natural == dealerNatural && !dealerBust && playerTotal == dealerTotal) {
                 tell(player, Messages.get("bet.push"));
                 continue;
             }
@@ -1374,6 +1378,14 @@ public final class BlackjackGame implements Game {
     /** Two cards making twenty-one straight from the deal. A doubled hand always has three. */
     private static boolean isNatural(BjHand hand, List<HandCard> cards) {
         return !hand.fromSplit && cards.size() == 2 && bestTotal(cards) == 21;
+    }
+
+    /**
+     * The dealer's two dealt cards making twenty-one. The dealer never draws on twenty-one, so a
+     * pile that still holds exactly two cards at the settle holds the two that were dealt.
+     */
+    private static boolean isDealerNatural(List<HandCard> pile) {
+        return pile.size() == 2 && bestTotal(pile) == 21;
     }
 
     /** Two cards of one rank, or two ten-value cards. Only ever asked about two cards. */
