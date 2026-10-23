@@ -324,6 +324,21 @@ class TableEstateTest {
     }
 
     @Test
+    void repeatedRetainedSettlementKeepsItsUnchangedReceiptFile() throws Exception {
+        write(raw(tableId));
+        var decision = decision(1, Recipient.WAITING);
+        Outcome first = estate.settle(decision);
+        assertInstanceOf(Outcome.Done.class, first);
+        String receipt = Files.readString(journal(1));
+        java.nio.file.attribute.FileTime old =
+                java.nio.file.attribute.FileTime.fromMillis(1_000_000L);
+        Files.setLastModifiedTime(journal(1), old);
+        assertEquals(first, estate.settle(decision));
+        assertEquals(receipt, Files.readString(journal(1)));
+        assertEquals(old, Files.getLastModifiedTime(journal(1)));
+    }
+
+    @Test
     void guardedPublicationCutAfterRetainedCompletionReplaysItsExactCurrentSnapshot()
             throws Exception {
         Path file = write(raw(tableId));

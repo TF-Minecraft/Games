@@ -150,7 +150,8 @@ public final class TableEstate implements EstateParticipant, Listener {
                 }
             if (decision.property().character().isEmpty()) {
                 if (plan == null) plan = retain(decision, rows, moved);
-                DurableFiles.write(file, RawJson.JSON.toJson(plan));
+                // Hourly reconcile settles this again; an unchanged receipt needs no new flush.
+                DurableFiles.writeIfChanged(file, RawJson.JSON.toJson(plan));
                 return done(moved);
             }
             if (plan != null) {

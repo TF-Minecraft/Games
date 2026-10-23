@@ -188,6 +188,7 @@ public class Games extends JavaPlugin {
         File folder = new File(getDataFolder(), relativePath);
         if (!folder.exists()) {
             folder.mkdirs();
+            net.tfminecraft.games.persistence.DurableFiles.forget(folder.toPath());
         }
     }
 
@@ -209,7 +210,9 @@ public class Games extends JavaPlugin {
         if (target.exists()) {
             return;
         }
-        target.getParentFile().mkdirs();
+        if (target.getParentFile().mkdirs()) {
+            net.tfminecraft.games.persistence.DurableFiles.forget(target.getParentFile().toPath());
+        }
         // Every default file is bundled in the plugin jar.
         try (InputStream in = getResource(relativePath)) {
             Files.copy(in, target.toPath());
