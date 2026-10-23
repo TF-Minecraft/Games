@@ -1,7 +1,6 @@
 package net.tfminecraft.games.persistence;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -93,16 +91,31 @@ class DurableFilesTest {
     }
 
     @Test
-    void recreatedFolderCountsAsNew() throws Exception {
+    void folderRecreatedByAWriteIsFlushedInFull() throws Exception {
         Path target = tables().resolve("plan.json");
         DurableFiles.write(target, "a");
-        assumeTrue(Files.readAttributes(tables(), BasicFileAttributes.class).fileKey() != null,
-                "needs file keys (Linux)");
         Files.delete(target);
         Files.delete(tables());
         flushed.clear();
         DurableFiles.write(target, "b");
         assertTrue(flushed.contains(tables().getParent()));
+        assertTrue(flushed.contains(data.toAbsolutePath()));
+    }
+
+    @Test
+    void folderRecreatedByMkdirsIsFlushedInFullOnceForgotten() throws Exception {
+        Path target = tables().resolve("plan.json");
+        DurableFiles.write(target, "a");
+        Files.delete(target);
+        Files.delete(tables());
+        Files.createDirectories(tables());
+        DurableFiles.forget(tables().getParent());
+        flushed.clear();
+        DurableFiles.write(target, "b");
+        assertTrue(flushed.contains(tables().getParent()));
+        flushed.clear();
+        DurableFiles.write(target, "c");
+        assertEquals(List.of(tables()), flushed);
     }
 
     @Test

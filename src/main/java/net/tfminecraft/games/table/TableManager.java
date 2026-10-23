@@ -4835,6 +4835,7 @@ public final class TableManager implements Listener, WagerHost {
         File folder = new File(Games.plugin.getDataFolder(), "Data/tables");
         if (!folder.exists()) {
             folder.mkdirs();
+            net.tfminecraft.games.persistence.DurableFiles.forget(folder.toPath());
         }
         return folder;
     }

@@ -8,7 +8,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,11 +21,12 @@ public final class DurableFiles {
 
     static Syncer syncer = DurableFiles::force;
 
-    // Directories whose whole ancestor chain has been flushed by this process, by file key so a
-    // deleted and recreated folder counts as new. Until then every write flushes all ancestors,
-    // which also covers folders made by mkdirs elsewhere or left behind by a write whose
-    // ancestor flush failed.
-    private static final Set<Object> durableDirectories = ConcurrentHashMap.newKeySet();
+    // Directories whose whole ancestor chain this process has flushed. Until then every write
+    // flushes all ancestors, which covers folders made by mkdirs elsewhere or left behind by a
+    // write whose ancestor flush failed. A folder this class or Games creates again is
+    // forgotten (see forget), so a recreated folder is flushed in full; data folders are not
+    // deleted by anyone else while the server runs.
+    private static final Set<Path> durableDirectories = ConcurrentHashMap.newKeySet();
 
     private DurableFiles() {}
 
@@ -37,6 +37,8 @@ public final class DurableFiles {
     public static void write(Path target, byte[] bytes) throws IOException {
         target = target.toAbsolutePath();
         Path parent = target.getParent();
+        Path created = firstMissing(parent);
+        if (created != null) forget(created);
         Files.createDirectories(parent);
         Path temp = Files.createTempFile(parent, ".pending-", ".tmp");
         try {
@@ -74,18 +76,29 @@ public final class DurableFiles {
 
     /** Flush a file's directory entry, and its ancestors the first time this process sees it. */
     private static void flushEntry(Path parent) throws IOException {
+        parent = parent.normalize();
         syncer.sync(parent);
-        Object key = directoryKey(parent);
-        if (durableDirectories.contains(key)) return;
+        if (durableDirectories.contains(parent)) return;
         for (Path directory = parent.getParent(); directory != null; directory = directory.getParent())
             syncer.sync(directory);
-        durableDirectories.add(key);
+        durableDirectories.add(parent);
     }
 
-    /** The directory's file key (device and inode on Linux), or its path where there is none. */
-    private static Object directoryKey(Path directory) throws IOException {
-        Object key = Files.readAttributes(directory, BasicFileAttributes.class).fileKey();
-        return key != null ? key : directory;
+    /**
+     * Forget a folder that was just created, and every folder under it, so the next write
+     * there flushes its whole ancestor chain again. Call after mkdirs on a folder that may
+     * have existed before.
+     */
+    public static void forget(Path directory) {
+        Path root = directory.toAbsolutePath().normalize();
+        durableDirectories.removeIf(known -> known.startsWith(root));
+    }
+
+    /** The highest ancestor of {@code directory} (or itself) that does not exist yet, or null. */
+    private static Path firstMissing(Path directory) {
+        Path missing = null;
+        for (Path path = directory; path != null && !Files.exists(path); path = path.getParent()) missing = path;
+        return missing;
     }
 
     /** Test hook: forget which directories were flushed. */
