@@ -88,9 +88,11 @@ public final class WagerJournal {
                 DurableFiles.write(file, JSON.toJson(conflict));
                 return refused();
             }
-            Intent applying = new Intent(intent.operationId(), plan, "applying");
-            ACTIVE.put(file, applying);
-            DurableFiles.write(file, JSON.toJson(applying));
+            // From here on the posting has happened, so this process must never post or deliver
+            // it again. Only the in-memory state says so: the intent file keeps "prepared", which
+            // after a crash freezes the table for review exactly as any retained intent does, and
+            // review always asks Denars for the operation's status rather than trusting the file.
+            ACTIVE.put(file, new Intent(intent.operationId(), plan, "applying"));
             TxResult moved = mutation.get();
             if (!moved.ok() || table.houseFloat() != plan.floatAfter()) throw new IllegalStateException("Item/float application differed from intent");
             TableManager.get().saveWager(table);
