@@ -120,4 +120,129 @@ class TableOwnershipStoreTest {
         assertThrows(IOException.class, () -> store.prepare(path.resolveSibling(id + ".json")));
         assertTrue(store.held(id));
     }
+
+    private static org.mockito.MockedStatic<net.tfminecraft.games.persistence.DurableFiles> writes() {
+        return org.mockito.Mockito.mockStatic(
+                net.tfminecraft.games.persistence.DurableFiles.class,
+                org.mockito.Mockito.CALLS_REAL_METHODS);
+    }
+
+    private static void verifyWrites(
+            org.mockito.MockedStatic<net.tfminecraft.games.persistence.DurableFiles> writes,
+            int times) {
+        writes.verify(
+                () ->
+                        net.tfminecraft.games.persistence.DurableFiles.write(
+                                org.mockito.ArgumentMatchers.any(Path.class),
+                                org.mockito.ArgumentMatchers.anyString()),
+                org.mockito.Mockito.times(times));
+    }
+
+    @Test
+    void identicalBytesAreNotWrittenAgainButAnyChangeIs() throws Exception {
+        var store = new TableOwnershipStore(data);
+        Path path = data.resolve("Data/tables/" + id + ".json");
+        try (var writes = writes()) {
+            store.save(id, row());
+            verifyWrites(writes, 1);
+            String first = Files.readString(path);
+            store.save(id, row());
+            store.save(id, row());
+            verifyWrites(writes, 1);
+            assertEquals(first, Files.readString(path));
+            JsonObject changed = row();
+            changed.addProperty("maxBet", 9);
+            store.save(id, changed);
+            verifyWrites(writes, 2);
+            assertEquals(9, RawJson.read(path).get("maxBet").getAsInt());
+            store.save(id, changed);
+            verifyWrites(writes, 2);
+        }
+    }
+
+    @Test
+    void bytesFoundOnDiskAreWrittenOnceBeforeTheyCountAsWritten() throws Exception {
+        JsonObject row = row();
+        row.addProperty("staffMint", false);
+        new TableOwnershipStore(data).save(id, row);
+        Path path = data.resolve("Data/tables/" + id + ".json");
+        String before = Files.readString(path);
+        var restart = new TableOwnershipStore(data);
+        assertTrue(restart.prepare(path));
+        try (var writes = writes()) {
+            restart.save(id, row);
+            // Found, not written by this store: their directory entry may never have been flushed.
+            verifyWrites(writes, 1);
+            assertEquals(before, Files.readString(path));
+            restart.save(id, row);
+            verifyWrites(writes, 1);
+            // Reading back the same bytes keeps them known as written.
+            restart.observe(path);
+            restart.save(id, row);
+            verifyWrites(writes, 1);
+        }
+    }
+
+    @Test
+    void aFailedWriteIsTriedAgainAndKeepsThrowingUntilItSucceeds() throws Exception {
+        var store = new TableOwnershipStore(data);
+        Path path = data.resolve("Data/tables/" + id + ".json");
+        store.save(id, row());
+        String written = Files.readString(path);
+        JsonObject changed = row();
+        changed.addProperty("maxBet", 9);
+        try (var writes = writes()) {
+            writes.when(
+                            () ->
+                                    net.tfminecraft.games.persistence.DurableFiles.write(
+                                            org.mockito.ArgumentMatchers.any(Path.class),
+                                            org.mockito.ArgumentMatchers.anyString()))
+                    .thenThrow(new IOException("disk full"));
+            assertThrows(IOException.class, () -> store.save(id, changed));
+            // The same bytes again are not mistaken for written ones: a money save still fails.
+            assertThrows(IOException.class, () -> store.save(id, changed));
+            verifyWrites(writes, 2);
+            assertEquals(written, Files.readString(path));
+        }
+        store.save(id, changed);
+        assertEquals(9, RawJson.read(path).get("maxBet").getAsInt());
+        assertFalse(store.held(id));
+    }
+
+    @Test
+    void aWriteThatFailsAfterReplacingTheFileHoldsTheTableRatherThanSkipping() throws Exception {
+        var store = new TableOwnershipStore(data);
+        Path path = data.resolve("Data/tables/" + id + ".json");
+        store.save(id, row());
+        JsonObject changed = row();
+        changed.addProperty("maxBet", 9);
+        try (var writes = writes()) {
+            writes.when(
+                            () ->
+                                    net.tfminecraft.games.persistence.DurableFiles.write(
+                                            org.mockito.ArgumentMatchers.any(Path.class),
+                                            org.mockito.ArgumentMatchers.anyString()))
+                    .thenAnswer(
+                            call -> {
+                                Files.writeString(path, call.<String>getArgument(1));
+                                throw new IOException("directory flush failed");
+                            });
+            assertThrows(IOException.class, () -> store.save(id, changed));
+        }
+        assertThrows(TableOwnershipStore.Conflict.class, () -> store.save(id, changed));
+        assertTrue(store.held(id));
+    }
+
+    @Test
+    void sourceReportsTheLastWrittenRowWithoutReadingTheFile() throws Exception {
+        var store = new TableOwnershipStore(data);
+        assertNull(store.source(id));
+        store.save(id, row());
+        var source = store.source(id);
+        assertEquals(data.resolve("Data/tables/" + id + ".json"), source.path());
+        assertEquals(account, source.account());
+        assertEquals(character, source.character());
+        source.raw().addProperty("maxBet", 1);
+        assertFalse(store.source(id).raw().has("maxBet"), "callers get a copy");
+    }
 }

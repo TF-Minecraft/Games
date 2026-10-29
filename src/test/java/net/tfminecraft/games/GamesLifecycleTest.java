@@ -119,9 +119,23 @@ class GamesLifecycleTest {
             MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
             var marker=plugin.getDataFolder().toPath().resolve("ownership-active");assertTrue(Files.exists(marker));
             MockBukkit.getMock().getPluginManager().disablePlugin(plugin);assertFalse(Files.exists(marker));
+            // Card changes still waiting are written after the tables are reset, before stopping.
+            var order=inOrder(manager);order.verify(manager).despawnWorldAll();order.verify(manager).flushUnsaved();
             MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
             var table=mock(net.tfminecraft.games.table.Table.class);when(table.moneyBlocked()).thenReturn(true);when(manager.tables()).thenReturn(List.of(table));
             MockBukkit.getMock().getPluginManager().disablePlugin(plugin);assertTrue(Files.exists(marker));
+        });
+    }
+
+    @Test
+    void waitingTableChangesAreWrittenEvenWhenResettingTablesFailsOnStop() throws Exception {
+        withLoadedPlugin(true, (plugin, manager, records) -> {
+            MockBukkit.getMock().getPluginManager().enablePlugin(plugin);
+            doThrow(new IllegalStateException("reset failed")).when(manager).despawnWorldAll();
+            try { MockBukkit.getMock().getPluginManager().disablePlugin(plugin); }
+            catch (RuntimeException ignored) { /* the server reports a failing disable itself */ }
+            verify(manager).flushUnsaved();
+            doNothing().when(manager).despawnWorldAll();
         });
     }
 

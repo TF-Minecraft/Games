@@ -84,7 +84,13 @@ public class Games extends JavaPlugin {
     @Override
     public void onDisable() {
         TableManager.get().stopClock();
-        TableManager.get().despawnWorldAll();
+        try {
+            TableManager.get().despawnWorldAll();
+        } finally {
+            // Tables that were not reset above (money held for review) still get their last
+            // card changes written.
+            TableManager.get().flushUnsaved();
+        }
         DisplayManager.get().shutdown();
         ProtocolLibBridge.shutdown();
         if(ownershipActive && TableManager.get().tables().stream().noneMatch(table->table.ownershipHeld() || table.moneyBlocked()

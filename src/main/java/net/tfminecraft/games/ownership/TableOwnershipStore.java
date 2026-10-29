@@ -20,7 +20,11 @@ public final class TableOwnershipStore {
     public record Row(
             Path path, UUID id, UUID account, UUID character, OwnershipKind kind, JsonObject raw) {}
 
-    private record Source(Path path, String hash, JsonObject raw) {}
+    /**
+     * The bytes this store last saw at a table's path. {@code durable} is set only when this
+     * process wrote them itself and the whole write, directory flush included, succeeded.
+     */
+    private record Source(Path path, String hash, JsonObject raw, boolean durable) {}
 
     private final Path folder;
     private final OwnershipMigration migration;
@@ -64,7 +68,10 @@ public final class TableOwnershipStore {
             conflicts.add(id);
             throw new Conflict("Duplicate table ID");
         }
-        sources.put(id, new Source(file, OwnershipMigration.hash(Files.readAllBytes(file)), raw));
+        String hash = OwnershipMigration.hash(Files.readAllBytes(file));
+        // Reading back the very bytes this process wrote keeps them known as fully written.
+        boolean durable = previous != null && previous.durable() && previous.hash().equals(hash);
+        sources.put(id, new Source(file, hash, raw, durable));
         rememberWagers(id, raw);
     }
 
@@ -153,15 +160,31 @@ public final class TableOwnershipStore {
         JsonObject next = previous == null ? known.deepCopy() : overlay(id, previous.raw(), known);
         OwnershipMigration.validateRow(next);
         String text = RawJson.JSON.toJson(next);
+        String hash = OwnershipMigration.hash(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // check() has just read the file and found exactly the bytes this process last wrote
+        // there in full, so the same bytes again need no new write or flush. A failed write never
+        // reaches sources, so whatever it tried to write is still written next time.
+        if (previous != null && previous.durable() && previous.hash().equals(hash)) return;
         DurableFiles.write(file, text);
-        sources.put(
-                id,
-                new Source(
-                        file,
-                        OwnershipMigration.hash(
-                                text.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                        next));
+        sources.put(id, new Source(file, hash, next, true));
         rememberWagers(id, next);
+    }
+
+    /**
+     * The file and raw row this store last wrote or read for a table, or null. Callers that
+     * trust it must run {@link #check(UUID)} first.
+     */
+    public Row source(UUID id) {
+        Source source = sources.get(id);
+        if (source == null) return null;
+        JsonObject raw = source.raw().deepCopy();
+        return new Row(
+                source.path(),
+                id,
+                RawJson.uuid(raw.get("ownerPlayer")),
+                RawJson.uuid(raw.get("ownerCharacterId")),
+                OwnershipKind.of(raw),
+                raw);
     }
 
     public void publish(Row before, JsonObject next) throws IOException {
@@ -182,7 +205,7 @@ public final class TableOwnershipStore {
             if (Files.isRegularFile(before.path())
                     && afterHash.equals(
                             OwnershipMigration.hash(Files.readAllBytes(before.path())))) {
-                sources.put(before.id(), new Source(before.path(), afterHash, next));
+                sources.put(before.id(), new Source(before.path(), afterHash, next, false));
                 publicationPending.add(before.id());
             }
             throw ex;
@@ -194,7 +217,8 @@ public final class TableOwnershipStore {
                         before.path(),
                         OwnershipMigration.hash(
                                 text.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                        next));
+                        next,
+                        true));
         rememberWagers(before.id(), next);
     }
 

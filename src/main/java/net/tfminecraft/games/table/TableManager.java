@@ -143,6 +143,9 @@ public final class TableManager implements Listener, WagerHost {
     private final Set<UUID> tableDealing = new HashSet<>();
     private BukkitTask handClock;
     private int handTicks;
+    private static final int UNSAVED_FLUSH_TICKS = 20;
+    // Tables with a change that moved no money and is not on disk yet; see saveSoon.
+    private final Set<UUID> unsaved = new LinkedHashSet<>();
 
     private TableManager() {
         WagerEngine.init(this);
@@ -197,6 +200,9 @@ public final class TableManager implements Listener, WagerHost {
     private void tickHands() {
         publishChatActors();
         handTicks++;
+        if (handTicks % UNSAVED_FLUSH_TICKS == 0) {
+            flushUnsaved();
+        }
         for (Table table : tables.values()) {
             tickAway(table);
             if (handTicks % 20 == 0) {
@@ -352,10 +358,13 @@ public final class TableManager implements Listener, WagerHost {
         }
         invalidOwnerFiles.remove(file.getName());return true;
     }
-    private Set<UUID> duplicateOwnerIds(File[] files) throws IOException {
+    private Set<UUID> duplicateOwnerIds(File[] files, Map<java.nio.file.Path, UUID> verified) throws IOException {
         ownershipInventoryComplete=true;
         Set<UUID> seen=new HashSet<>(),duplicates=new HashSet<>();
         for(File file:files) {
+            // A verified loaded table's file has just been checked byte for byte, so its ID is known.
+            UUID known=verified.get(file.toPath().toAbsolutePath().normalize());
+            if(known!=null) { if(!seen.add(known)) duplicates.add(known);continue; }
             // No mutation is allowed before the complete raw inventory establishes uniqueness.
             com.google.gson.JsonObject raw;
             try { raw=net.tfminecraft.games.ownership.RawJson.read(file.toPath()); }
@@ -367,8 +376,12 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     private void loadTables(boolean onlyMissing) {
+        Map<java.nio.file.Path, UUID> verified = new HashMap<>();
         for (Table loaded : tables.values()) {
-            try { ownershipStore().check(loaded.getId()); }
+            try {
+                ownershipStore().check(loaded.getId());
+                if (onlyMissing) verifiedSource(loaded, verified);
+            }
             catch (IOException ex) { ownershipStore().hold(loaded.getId()); }
         }
         File folder = tablesFolder();
@@ -377,13 +390,24 @@ public final class TableManager implements Listener, WagerHost {
             return;
         }
         Set<UUID> duplicates;
-        try { duplicates=duplicateOwnerIds(files); }
+        try { duplicates=duplicateOwnerIds(files, verified); }
         catch(IOException ex) {
             // Cache raw shape failures for the usual repair-and-retry path without publishing others.
             for(File file:files) try { validOwnerFile(file); } catch(IOException ignored) { }
             return;
         }
         for (File file : files) {
+            UUID verifiedId = verified.get(file.toPath().toAbsolutePath().normalize());
+            if (verifiedId != null && !duplicates.contains(verifiedId)) {
+                // Loaded, unchanged and needing no migration: the steps below would only read the
+                // same bytes again and skip it, so take the owner straight from what was checked.
+                Table loaded = tables.get(verifiedId);
+                if (loaded != null) {
+                    loaded.setOwnerCharacterId(ownershipStore().source(verifiedId).character());
+                    syncOwnership(loaded);
+                }
+                continue;
+            }
             try {
                 if(!validOwnerFile(file)) continue;
                 UUID rawId=net.tfminecraft.games.ownership.RawJson.uuid(net.tfminecraft.games.ownership.RawJson.read(file.toPath()).get("id"));
@@ -469,6 +493,28 @@ public final class TableManager implements Listener, WagerHost {
         if (Cache.debug) {
             Games.plugin.getLogger().info("[Games] Debug: loaded tables=" + tables.size());
         }
+    }
+
+    /**
+     * Note a loaded table whose file a deferred pass need not read again: check() has just found
+     * exactly the bytes this store last wrote or read, nothing holds the table, and neither the
+     * guild nor the ownership migration would change those bytes. Anything else takes the full
+     * pass, exactly as before.
+     */
+    private void verifiedSource(Table loaded, Map<java.nio.file.Path, UUID> verified) {
+        var store = ownershipStore();
+        var source = store.source(loaded.getId());
+        if (source == null || store.held(loaded.getId())) return;
+        var raw = source.raw();
+        // The same no-op rules as GuildTableMigration.prepare and OwnershipMigration.prepare.
+        var guild = raw.get("ownerGuildId");
+        boolean guildDone = guild == null || guild.isJsonNull()
+                || (guild.isJsonPrimitive() && guild.getAsString().isBlank())
+                || (raw.has("ownerGuildMigrated") && raw.get("ownerGuildMigrated").isJsonPrimitive()
+                        && raw.get("ownerGuildMigrated").getAsBoolean());
+        boolean ownerDone = source.account() == null || source.character() != null;
+        if (!guildDone || !ownerDone || !net.tfminecraft.games.ownership.OwnershipKind.modeRecorded(raw)) return;
+        verified.put(source.path().toAbsolutePath().normalize(), loaded.getId());
     }
 
     private static String fileSignature(File file) {
@@ -563,7 +609,7 @@ public final class TableManager implements Listener, WagerHost {
             }
             table.getHands().clear();
             despawnTablePiles(table);
-            save(table);
+            saveSoon(table);
             try {
                 rebuildCardStacks(table);
                 recycleIfNeeded(table, null);
@@ -927,6 +973,7 @@ public final class TableManager implements Listener, WagerHost {
         String guildId = table.ownerGuildId();
         despawnWorld(table);
         tables.remove(table.getId());
+        unsaved.remove(table.getId());
         deleteFile(table.getId());
         // A table staff put down without a deck gives none back, or placing and lifting it would mint decks.
         ItemStack deckItem = table.deckConsumed()
@@ -1190,7 +1237,7 @@ public final class TableManager implements Listener, WagerHost {
         int destIndex = cards.size();
         int destCount = destIndex + 1;
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         DisplayPose end = pileSlot(table, pile, destIndex, destCount, faceUp);
         ItemStack show = faceUp && face != null ? face : back;
         if (Cache.handDealTicks <= 0) {
@@ -1198,13 +1245,13 @@ public final class TableManager implements Listener, WagerHost {
             if (!DisplayManager.get().spawn(tokenId, table.getOrigin(), show, end)) {
                 table.getDeck().discard(card);
                 rebuildCardStacks(table);
-                save(table);
+                saveSoon(table);
                 return false;
             }
             HandCard held = new HandCard(card, tokenId, faceUp);
             cards.add(held);
             layoutTablePile(table, pile, 0);
-            save(table);
+            saveSoon(table);
             playCardSound(table.getOrigin());
             Bukkit.getScheduler().runTaskLater(Games.plugin, after, 1L);
             return true;
@@ -1217,7 +1264,7 @@ public final class TableManager implements Listener, WagerHost {
         if (!DisplayManager.get().spawn(courierId, courierOrigin, show, start)) {
             table.getDeck().discard(card);
             rebuildCardStacks(table);
-            save(table);
+            saveSoon(table);
             return false;
         }
         playCardSound(table.getOrigin());
@@ -1231,20 +1278,20 @@ public final class TableManager implements Listener, WagerHost {
                 still.getDeck().discard(card);
                 tableDealing.remove(tableId);
                 rebuildCardStacks(still);
-                save(still);
+                saveSoon(still);
                 return;
             }
             UUID tokenId = UUID.randomUUID();
             if (!DisplayManager.get().spawn(tokenId, still.getOrigin(), show, end)) {
                 still.getDeck().discard(card);
                 rebuildCardStacks(still);
-                save(still);
+                saveSoon(still);
                 onFailure.run();
                 return;
             }
             still.tablePile(pile).add(new HandCard(card, tokenId, faceUp));
             layoutTablePile(still, pile, 0);
-            save(still);
+            saveSoon(still);
             after.run();
         });
         return true;
@@ -1291,7 +1338,7 @@ public final class TableManager implements Listener, WagerHost {
     public void reshuffleFull(Table table) {
         table.getDeck().reshuffleAll();
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
     }
 
     private void recycleIfNeeded(Table table, Runnable after) {
@@ -1374,7 +1421,7 @@ public final class TableManager implements Listener, WagerHost {
         table.setRecycling(false);
         table.getDeck().recycle();
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         runPending(after);
     }
 
@@ -1468,7 +1515,7 @@ public final class TableManager implements Listener, WagerHost {
         if (value < need) {
             // need is only above zero when a game asked for it, so game is set here.
             refundStreet(table, player, street);
-            save(table);
+            saveSoon(table);
             game.onStreetCommit(table, player, value, true);
             player.sendMessage(Messages.get("wager.folded"));
             return;
@@ -2116,7 +2163,7 @@ public final class TableManager implements Listener, WagerHost {
     public void muckPlayer(Table table, UUID playerId) {
         discardPlayerCards(table, playerId);
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         recycleIfNeeded(table, null);
     }
 
@@ -2134,7 +2181,7 @@ public final class TableManager implements Listener, WagerHost {
             table.tablePiles().remove(pile);
         }
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         notifyTablePiles(table);
         recycleIfNeeded(table, null);
     }
@@ -2994,7 +3041,7 @@ public final class TableManager implements Listener, WagerHost {
         playChipSound(table, at);
         if (!dealerTray) {
             table.actives().add(player.getUniqueId());
-            save(table);
+            saveSoon(table);
             tryBeginSession(table);
             notifyChipIn(table, player, need, one);
         }
@@ -3130,7 +3177,7 @@ public final class TableManager implements Listener, WagerHost {
         playChipSound(table, hit);
         if (!dealerTray) {
             table.actives().add(player.getUniqueId());
-            save(table);
+            saveSoon(table);
             tryBeginSession(table);
             notifyChipIn(table, player, denars, one);
         }
@@ -4189,7 +4236,7 @@ public final class TableManager implements Listener, WagerHost {
             destCount = destIndex + 1;
         }
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         HandLock lock = lockHand(table, player, true);
         Location anchor = lockLocation(player, lock);
         // The incoming card may be the first in a freshly split group, so it can widen the span.
@@ -4223,7 +4270,7 @@ public final class TableManager implements Listener, WagerHost {
         if (!DisplayManager.get().spawn(courierId, courierOrigin, back, start)) {
             table.getDeck().discard(card);
             rebuildCardStacks(table);
-            save(table);
+            saveSoon(table);
             player.sendMessage(Messages.get("place.spawn_failed"));
             return false;
         }
@@ -4258,7 +4305,7 @@ public final class TableManager implements Listener, WagerHost {
         if (!DisplayManager.get().spawn(tokenId, table.getOrigin(), back, fan)) {
             table.getDeck().discard(card);
             rebuildCardStacks(table);
-            save(table);
+            saveSoon(table);
             return null;
         }
         DisplayManager.get().setLayoutOwner(tokenId, player.getUniqueId());
@@ -4269,7 +4316,7 @@ public final class TableManager implements Listener, WagerHost {
         HandCard held = new HandCard(card, tokenId);
         held.setSlot(slot);
         table.handOf(player.getUniqueId()).add(held);
-        save(table);
+        saveSoon(table);
         return held;
     }
 
@@ -4323,7 +4370,7 @@ public final class TableManager implements Listener, WagerHost {
         removePendingCard(playerId, card);
         table.getDeck().discard(card);
         rebuildCardStacks(table);
-        save(table);
+        saveSoon(table);
         if (dealStillFlying(playerId)) {
             return;
         }
@@ -4810,10 +4857,40 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void saveWager(Table table) throws IOException {
+        // The whole table is written, so any change that was waiting goes with it.
+        unsaved.remove(table.getId());
         ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(toData(table)).getAsJsonObject());
     }
 
+    /**
+     * Write a change that moved no money (cards drawn, returned, mucked or shuffled, a seat
+     * taken) on the next flush rather than now. Hands are never saved and a table that was in
+     * play is reset when it loads, so a crash before the flush loses nothing a restart keeps.
+     * Every money movement still saves the whole table at once through {@link #save}.
+     */
+    private void saveSoon(Table table) {
+        unsaved.add(table.getId());
+    }
+
+    /** Write every table with a change still waiting. Runs every second and on shutdown. */
+    public void flushUnsaved() {
+        for (UUID id : new ArrayList<>(unsaved)) {
+            Table table = tables.get(id);
+            if (table == null) {
+                unsaved.remove(id);
+                continue;
+            }
+            try {
+                save(table);
+            } catch (RuntimeException ex) {
+                // save() has already cleared the mark, so one bad table cannot stall the clock.
+                Games.plugin.getLogger().warning("[Games] Failed to save table " + id + ": " + ex);
+            }
+        }
+    }
+
     private void save(Table table) {
+        unsaved.remove(table.getId());
         File file = tableFile(table.getId());
         TableData data = toData(table);
         try {
