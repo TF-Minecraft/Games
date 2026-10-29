@@ -974,6 +974,7 @@ public final class TableManager implements Listener, WagerHost {
         despawnWorld(table);
         tables.remove(table.getId());
         unsaved.remove(table.getId());
+        saveFailing.remove(table.getId());
         deleteFile(table.getId());
         // A table staff put down without a deck gives none back, or placing and lifting it would mint decks.
         ItemStack deckItem = table.deckConsumed()
@@ -4884,6 +4885,11 @@ public final class TableManager implements Listener, WagerHost {
                 unsaved.remove(id);
                 continue;
             }
+            // The store holds a table it found edited outside, duplicated or mid-publication; writing
+            // it would only fail again and freeze it further on a timer. It stays marked, and the next
+            // full save after the hold clears writes the change. If the server stops first, only that
+            // card change is lost, as in a crash: hands are not saved and the table reloads from disk.
+            if (ownershipStore().held(id)) continue;
             try {
                 save(table);
             } catch (RuntimeException ex) {

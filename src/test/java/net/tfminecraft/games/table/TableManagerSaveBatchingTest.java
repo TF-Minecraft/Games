@@ -153,6 +153,27 @@ class TableManagerSaveBatchingTest extends TableManagerHandFixture {
         }
     }
 
+    @Test void theFlushLeavesATableTheStoreHoldsAloneUntilTheHoldClears() throws Exception {
+        Table table = placeAndClearMessage();
+        manager.dealToPlayer(table, player, 1);
+        tick(5);
+        Object store = manager.ownershipStore();
+        var conflictsField = store.getClass().getDeclaredField("conflicts");
+        conflictsField.setAccessible(true);
+        @SuppressWarnings("unchecked") var conflicts = (java.util.Set<UUID>) conflictsField.get(store);
+        conflicts.add(table.getId());
+        try (var writes = countWrites()) {
+            manager.flushUnsaved();
+            manager.flushUnsaved();
+            verifyWrites(writes, table, 0);
+        }
+        assertFalse(table.ownershipHeld() && !conflicts.contains(table.getId()), "the flush did not freeze it further");
+        assertEquals(2, remainingOnDisk(table));
+        conflicts.remove(table.getId());
+        manager.flushUnsaved();
+        assertEquals(1, remainingOnDisk(table), "the waiting change is written once the hold clears");
+    }
+
     @Test void aFailedWagerSaveLeavesTheWaitingChangeForTheNextFlush() throws Exception {
         Table table = placeAndClearMessage();
         manager.dealToPlayer(table, player, 1);
