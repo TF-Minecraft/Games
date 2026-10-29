@@ -199,8 +199,40 @@ class WagerJournalTest {
         assertFalse(new MoneyTx(host, table, "peel").moveAll(Accounts.tray(table), Accounts.bank(table)).commit().ok());
         assertEquals(6, table.ledger().total());
         assertTrue(table.moneyBlocked());
-        assertTrue(Files.readString(journal()).contains("applying"));
+        // The posting happened, but the file keeps its prepared state; it still freezes the table.
+        assertEquals("prepared", JsonParser.parseString(Files.readString(journal())).getAsJsonObject().get("state").getAsString());
         assertEquals(0, table.houseFloat());
+        table.setMoneyBlocked(false);
+        assertFalse(new MoneyTx(host, table, "peel").moveAll(Accounts.tray(table), Accounts.bank(table)).commit().ok());
+        denars.verify(() -> Denars.post(anyString(), anyString(), anyList()), times(1));
+        assertEquals(6, table.ledger().total(), "this process never posts or delivers an applied operation again");
+    }
+
+    @Test void appliedPostingWritesItsIntentOnceAndRemovesIt() throws Exception {
+        try (MockedStatic<net.tfminecraft.games.persistence.DurableFiles> files =
+                mockStatic(net.tfminecraft.games.persistence.DurableFiles.class, CALLS_REAL_METHODS)) {
+            assertEquals(5, funding(5).commit().moved());
+            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.write(eq(journal()), anyString()), times(1));
+            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.delete(journal()), times(1));
+        }
+        assertFalse(Files.exists(journal()));
+        verify(manager).saveWager(table);
+    }
+
+    @Test void crashAfterPostingLeavesAPreparedIntentThatFreezesTheTableOnRestart() throws Exception {
+        // The table save fails after Denars applied the posting, as a crash at that point would.
+        doThrow(new IOException("disk full")).when(manager).saveWager(table);
+        assertFalse(funding(5).commit().ok());
+        String retained = Files.readString(journal());
+        assertEquals("prepared", JsonParser.parseString(retained).getAsJsonObject().get("state").getAsString());
+        WagerJournal.initialize();
+        assertTrue(WagerJournal.blocked(table));
+        assertFalse(WagerJournal.active(table));
+        doNothing().when(manager).saveWager(table);
+        table.setMoneyBlocked(false);
+        assertFalse(funding(5).commit().ok());
+        assertEquals(1, postings.size());
+        assertEquals(retained, Files.readString(journal()));
     }
 
     @Test void failedTableSavePreservesAmbiguousDeliveryAndBlocksSecondPayment() throws Exception {
