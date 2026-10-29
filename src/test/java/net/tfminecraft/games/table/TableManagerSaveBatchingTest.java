@@ -40,7 +40,7 @@ class TableManagerSaveBatchingTest extends TableManagerHandFixture {
 
     private static void verifyWrites(MockedStatic<DurableFiles> writes, Table table, int times) {
         writes.verify(() -> DurableFiles.write(
-                argThat((Path path) -> path.getFileName().toString().equals(table.getId() + ".json")),
+                argThat((Path path) -> path != null && path.getFileName().toString().equals(table.getId() + ".json")),
                 anyString()), times(times));
     }
 
@@ -121,6 +121,49 @@ class TableManagerSaveBatchingTest extends TableManagerHandFixture {
             verifyWrites(writes, table, 1);
         }
         assertEquals(2, remainingOnDisk(table));
+    }
+
+    private static void failWrites(MockedStatic<DurableFiles> writes, Table table) {
+        writes.when(() -> DurableFiles.write(
+                argThat((Path path) -> path != null && path.getFileName().toString().equals(table.getId() + ".json")),
+                anyString())).thenThrow(new java.io.IOException("disk full"));
+    }
+
+    @Test void aFailedFlushKeepsTheChangeWaitingAndRetriesItWithOneWarning() throws Exception {
+        Table table = placeAndClearMessage();
+        manager.dealToPlayer(table, player, 1);
+        tick(5);
+        var logger = net.tfminecraft.games.Games.plugin.getLogger();
+        clearInvocations(logger);
+        try (var writes = countWrites()) {
+            failWrites(writes, table);
+            manager.flushUnsaved();
+            manager.flushUnsaved();
+            verifyWrites(writes, table, 2);
+        }
+        assertTrue(table.ownershipHeld(), "a failed write still holds the table");
+        assertEquals(2, remainingOnDisk(table), "nothing reached the disk");
+        verify(logger, times(1)).warning(contains("Failed to save table " + table.getId()));
+        manager.flushUnsaved();
+        assertEquals(1, remainingOnDisk(table), "the waiting change is written once the disk works again");
+        verify(logger).info(contains("saved again"));
+        try (var writes = countWrites()) {
+            manager.flushUnsaved();
+            verifyWrites(writes, table, 0);
+        }
+    }
+
+    @Test void aFailedWagerSaveLeavesTheWaitingChangeForTheNextFlush() throws Exception {
+        Table table = placeAndClearMessage();
+        manager.dealToPlayer(table, player, 1);
+        tick(5);
+        try (var writes = countWrites()) {
+            failWrites(writes, table);
+            assertThrows(java.io.IOException.class, () -> manager.saveWager(table));
+        }
+        assertEquals(2, remainingOnDisk(table));
+        manager.flushUnsaved();
+        assertEquals(1, remainingOnDisk(table));
     }
 
     @Test void aFlushSkipsATableThatWasRemovedMeanwhile() throws Exception {

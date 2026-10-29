@@ -4857,9 +4857,10 @@ public final class TableManager implements Listener, WagerHost {
     }
 
     public void saveWager(Table table) throws IOException {
-        // The whole table is written, so any change that was waiting goes with it.
-        unsaved.remove(table.getId());
         ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(toData(table)).getAsJsonObject());
+        // The whole table is on disk, so any change that was waiting went with it. A failed
+        // write throws before this, so the waiting change stays marked for the next flush.
+        unsaved.remove(table.getId());
     }
 
     /**
@@ -4868,6 +4869,9 @@ public final class TableManager implements Listener, WagerHost {
      * play is reset when it loads, so a crash before the flush loses nothing a restart keeps.
      * Every money movement still saves the whole table at once through {@link #save}.
      */
+    /** Tables whose last write failed, so a retry that keeps failing does not warn again. */
+    private final java.util.Set<UUID> saveFailing = new java.util.HashSet<>();
+
     private void saveSoon(Table table) {
         unsaved.add(table.getId());
     }
@@ -4883,21 +4887,31 @@ public final class TableManager implements Listener, WagerHost {
             try {
                 save(table);
             } catch (RuntimeException ex) {
-                // save() has already cleared the mark, so one bad table cannot stall the clock.
+                // Not a disk failure (those keep the mark and retry): drop the mark so one bad
+                // table cannot stall the clock or log every second.
+                unsaved.remove(id);
                 Games.plugin.getLogger().warning("[Games] Failed to save table " + id + ": " + ex);
             }
         }
     }
 
     private void save(Table table) {
-        unsaved.remove(table.getId());
-        File file = tableFile(table.getId());
+        UUID id = table.getId();
         TableData data = toData(table);
         try {
-            ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(data).getAsJsonObject());
+            ownershipStore().save(id, net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(data).getAsJsonObject());
+            // Only a written table clears its waiting change.
+            unsaved.remove(id);
+            if (saveFailing.remove(id)) {
+                Games.plugin.getLogger().info("[Games] Table " + id + " saved again after an earlier failure.");
+            }
         } catch (IOException ex) {
             table.setOwnershipHeld(true);table.setMoneyBlocked(true);
-            Games.plugin.getLogger().warning("[Games] Failed to save table " + table.getId() + ": " + ex.getMessage());
+            // The change stays waiting, so a later flush retries it once the disk recovers. A table
+            // that keeps failing warns once, not on every one-second retry.
+            if (saveFailing.add(id)) {
+                Games.plugin.getLogger().warning("[Games] Failed to save table " + id + ": " + ex.getMessage());
+            }
         }
     }
 
