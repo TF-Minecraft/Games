@@ -56,6 +56,14 @@ class DurableFilesTest {
     }
 
     @Test
+    void flushDirectoryFlushesExactlyThatFolderEveryTime() throws Exception {
+        Files.createDirectories(tables());
+        DurableFiles.flushDirectory(tables());
+        DurableFiles.flushDirectory(tables().resolve("..").resolve("tables"));
+        assertEquals(java.util.List.of(tables().normalize(), tables().normalize()), flushed);
+    }
+
+    @Test
     void firstWriteFlushesEveryAncestorAndLaterWritesOnlyTheParent() throws Exception {
         DurableFiles.write(tables().resolve("a.json"), "a");
         assertEquals(tables(), flushed.get(0));

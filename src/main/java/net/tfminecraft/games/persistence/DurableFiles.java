@@ -54,6 +54,15 @@ public final class DurableFiles {
         write(target, text.getBytes(StandardCharsets.UTF_8), false);
     }
 
+    /**
+     * Flush a directory now, so every rename and delete made in it so far is on disk before
+     * anything that depends on them. Pairs with {@link #writeReplacing} when a later step (such
+     * as deleting a journal) must not reach disk before the replacement does.
+     */
+    public static void flushDirectory(Path directory) throws IOException {
+        syncer.sync(directory.toAbsolutePath().normalize());
+    }
+
     private static void write(Path target, byte[] bytes, boolean flushReplace) throws IOException {
         target = target.toAbsolutePath();
         boolean replacing = !flushReplace && Files.isRegularFile(target);

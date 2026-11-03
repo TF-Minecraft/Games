@@ -215,6 +215,10 @@ class WagerJournalTest {
             files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.write(eq(journal()), anyString()), times(1));
             files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.deleteUnflushed(journal()), times(1));
         }
+        // The table save is flushed before the intent goes.
+        var order = inOrder(manager);
+        order.verify(manager).saveWager(table);
+        order.verify(manager).flushTableSaves();
         assertFalse(Files.exists(journal()));
         verify(manager).saveWager(table);
     }

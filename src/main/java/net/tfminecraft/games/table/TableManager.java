@@ -4857,6 +4857,15 @@ public final class TableManager implements Listener, WagerHost {
         }
     }
 
+    /**
+     * Put every table save made so far on disk. Table files are replaced without a folder flush
+     * ({@code DurableFiles.writeReplacing}); a finished wager intent may only be deleted once its
+     * table save is durable, so the journal calls this first.
+     */
+    public void flushTableSaves() throws IOException {
+        net.tfminecraft.games.persistence.DurableFiles.flushDirectory(ownershipStore().folder());
+    }
+
     public void saveWager(Table table) throws IOException {
         ownershipStore().save(table.getId(), net.tfminecraft.games.ownership.RawJson.JSON.toJsonTree(toData(table)).getAsJsonObject());
         // The whole table is on disk, so any change that was waiting went with it. A failed
