@@ -22,7 +22,9 @@ public final class TableOwnershipStore {
 
     /**
      * The bytes this store last saw at a table's path. {@code durable} is set only when this
-     * process wrote them itself and the whole write, directory flush included, succeeded.
+     * process wrote them itself and the write succeeded: the data is synced, and the folder too for
+     * a new file. A replaced file's folder is flushed by the wager journal or an estate checkpoint
+     * before anything relies on it ({@code TableManager.flushTableSaves}).
      */
     private record Source(Path path, String hash, JsonObject raw, boolean durable) {}
 
@@ -165,7 +167,12 @@ public final class TableOwnershipStore {
         // there in full, so the same bytes again need no new write or flush. A failed write never
         // reaches sources, so whatever it tried to write is still written next time.
         if (previous != null && previous.durable() && previous.hash().equals(hash)) return;
-        DurableFiles.write(file, text);
+        // Rewritten on every money movement. A table file that already exists is replaced without
+        // a directory flush: only an OS crash or power loss can bring back its previous complete
+        // version. The wager journal flushes this folder before deleting its intent, so a returning
+        // previous version always comes with the intent that freezes the table for review. A new
+        // table file is flushed in full.
+        DurableFiles.writeReplacing(file, text);
         sources.put(id, new Source(file, hash, next, true));
         rememberWagers(id, next);
     }

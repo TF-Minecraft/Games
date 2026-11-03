@@ -209,12 +209,18 @@ class WagerJournalTest {
     }
 
     @Test void appliedPostingWritesItsIntentOnceAndRemovesIt() throws Exception {
+        // The intent is still on disk when the table save is flushed.
+        doAnswer(call -> { assertTrue(Files.exists(journal())); return null; }).when(manager).flushTableSaves();
         try (MockedStatic<net.tfminecraft.games.persistence.DurableFiles> files =
                 mockStatic(net.tfminecraft.games.persistence.DurableFiles.class, CALLS_REAL_METHODS)) {
             assertEquals(5, funding(5).commit().moved());
             files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.write(eq(journal()), anyString()), times(1));
-            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.delete(journal()), times(1));
+            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.deleteUnflushed(journal()), times(1));
         }
+        // The table save is flushed before the intent goes.
+        var order = inOrder(manager);
+        order.verify(manager).saveWager(table);
+        order.verify(manager).flushTableSaves();
         assertFalse(Files.exists(journal()));
         verify(manager).saveWager(table);
     }
@@ -233,6 +239,19 @@ class WagerJournalTest {
         assertFalse(funding(5).commit().ok());
         assertEquals(1, postings.size());
         assertEquals(retained, Files.readString(journal()));
+    }
+
+    @Test void failedTableFlushKeepsTheIntentAndBlocksSecondPayment() throws Exception {
+        doThrow(new IOException("disk full")).when(manager).flushTableSaves();
+        try (MockedStatic<net.tfminecraft.games.persistence.DurableFiles> files =
+                mockStatic(net.tfminecraft.games.persistence.DurableFiles.class, CALLS_REAL_METHODS)) {
+            assertFalse(funding(5).commit().ok());
+            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.deleteUnflushed(any()), never());
+        }
+        assertTrue(table.moneyBlocked());
+        assertTrue(Files.exists(journal()));
+        assertFalse(funding(5).commit().ok());
+        assertEquals(1, postings.size());
     }
 
     @Test void failedTableSavePreservesAmbiguousDeliveryAndBlocksSecondPayment() throws Exception {

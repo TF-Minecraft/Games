@@ -98,7 +98,12 @@ public final class WagerJournal {
             TableManager.get().saveWager(table);
             if (!GuildBank.declareProfit(table, intent.operationId(), plan.profit()))
                 throw new IllegalStateException("Casino profit bookkeeping is pending");
-            DurableFiles.delete(file);
+            // The posting and the table save are done. The table save skipped its folder flush, so
+            // flush it now: the intent must not be gone from disk while the table's previous
+            // version could still come back. If an OS crash or power loss brings this intent back,
+            // the table freezes for review, which asks Denars for the posting's status.
+            TableManager.get().flushTableSaves();
+            DurableFiles.deleteUnflushed(file);
             ACTIVE.remove(file);
             return moved;
         } catch (IOException | RuntimeException ex) {

@@ -56,6 +56,14 @@ class DurableFilesTest {
     }
 
     @Test
+    void flushDirectoryFlushesExactlyThatFolderEveryTime() throws Exception {
+        Files.createDirectories(tables());
+        DurableFiles.flushDirectory(tables());
+        DurableFiles.flushDirectory(tables().resolve("..").resolve("tables"));
+        assertEquals(java.util.List.of(tables().normalize(), tables().normalize()), flushed);
+    }
+
+    @Test
     void firstWriteFlushesEveryAncestorAndLaterWritesOnlyTheParent() throws Exception {
         DurableFiles.write(tables().resolve("a.json"), "a");
         assertEquals(tables(), flushed.get(0));
@@ -64,6 +72,39 @@ class DurableFilesTest {
         flushed.clear();
         DurableFiles.write(tables().resolve("b.json"), "b");
         assertEquals(List.of(tables()), flushed);
+    }
+
+    @Test
+    void replacingWriteFlushesOnlyANewFileAndAlwaysPublishesWholeContent() throws Exception {
+        Path target = tables().resolve("table.json");
+        DurableFiles.writeReplacing(target, "first");
+        assertEquals("first", Files.readString(target));
+        assertEquals(tables(), flushed.get(0));
+        assertTrue(flushed.contains(data.toAbsolutePath()), "a new file gets its whole ancestor chain");
+        flushed.clear();
+        DurableFiles.writeReplacing(target, "second");
+        assertEquals("second", Files.readString(target));
+        assertTrue(flushed.isEmpty(), "replacing an existing file skips the directory flush");
+        DurableFiles.write(target, "third");
+        assertEquals(List.of(tables()), flushed, "plain write still flushes a replace");
+        try (var files = Files.list(tables())) {
+            assertEquals(1, files.count(), "no pending temp file is left");
+        }
+    }
+
+    @Test
+    void unflushedDeleteRemovesTheFileWithoutAFlush() throws Exception {
+        Path target = tables().resolve("intent.json");
+        DurableFiles.write(target, "intent");
+        flushed.clear();
+        DurableFiles.deleteUnflushed(target);
+        assertFalse(Files.exists(target));
+        DurableFiles.deleteUnflushed(target);
+        assertTrue(flushed.isEmpty());
+        DurableFiles.write(target, "intent");
+        flushed.clear();
+        DurableFiles.delete(target);
+        assertEquals(List.of(tables()), flushed, "plain delete still flushes");
     }
 
     @Test

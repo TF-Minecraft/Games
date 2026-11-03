@@ -132,7 +132,7 @@ class TableOwnershipStoreTest {
             int times) {
         writes.verify(
                 () ->
-                        net.tfminecraft.games.persistence.DurableFiles.write(
+                        net.tfminecraft.games.persistence.DurableFiles.writeReplacing(
                                 org.mockito.ArgumentMatchers.any(Path.class),
                                 org.mockito.ArgumentMatchers.anyString()),
                 org.mockito.Mockito.times(times));
@@ -194,7 +194,7 @@ class TableOwnershipStoreTest {
         try (var writes = writes()) {
             writes.when(
                             () ->
-                                    net.tfminecraft.games.persistence.DurableFiles.write(
+                                    net.tfminecraft.games.persistence.DurableFiles.writeReplacing(
                                             org.mockito.ArgumentMatchers.any(Path.class),
                                             org.mockito.ArgumentMatchers.anyString()))
                     .thenThrow(new IOException("disk full"));
@@ -219,7 +219,7 @@ class TableOwnershipStoreTest {
         try (var writes = writes()) {
             writes.when(
                             () ->
-                                    net.tfminecraft.games.persistence.DurableFiles.write(
+                                    net.tfminecraft.games.persistence.DurableFiles.writeReplacing(
                                             org.mockito.ArgumentMatchers.any(Path.class),
                                             org.mockito.ArgumentMatchers.anyString()))
                     .thenAnswer(

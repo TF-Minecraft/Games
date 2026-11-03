@@ -316,7 +316,8 @@ public final class TableManager implements Listener, WagerHost {
             Table table=tables.get(id);if(table!=null) table.setEstatePending(pending);
         }
     }
-    public void checkpoint(Table table) throws IOException { saveWager(table); }
+    /** Save the table and put the save on disk: an estate plan written next takes it as its "before". */
+    public void checkpoint(Table table) throws IOException { saveWager(table); flushTableSaves(); }
     public void estateOwner(UUID id,UUID account,UUID character) {
         Table table=tables.get(id);
         if(table!=null) { table.setOwnerPlayer(account);table.setOwnerCharacterId(character);refreshLabel(table); }
@@ -4855,6 +4856,15 @@ public final class TableManager implements Listener, WagerHost {
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    /**
+     * Put every table save made so far on disk. Table files are replaced without a folder flush
+     * ({@code DurableFiles.writeReplacing}); a finished wager intent may only be deleted once its
+     * table save is durable, so the journal calls this first.
+     */
+    public void flushTableSaves() throws IOException {
+        net.tfminecraft.games.persistence.DurableFiles.flushDirectory(ownershipStore().folder());
     }
 
     public void saveWager(Table table) throws IOException {
