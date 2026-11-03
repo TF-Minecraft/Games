@@ -165,7 +165,11 @@ public final class TableOwnershipStore {
         // there in full, so the same bytes again need no new write or flush. A failed write never
         // reaches sources, so whatever it tried to write is still written next time.
         if (previous != null && previous.durable() && previous.hash().equals(hash)) return;
-        DurableFiles.write(file, text);
+        // Rewritten on every money movement. A table file that already exists is replaced without
+        // a directory flush: only an OS crash or power loss can bring back its previous complete
+        // version, and the wager journal's intent (deleted after this save) then still freezes the
+        // table for review. A new table file is flushed in full.
+        DurableFiles.writeReplacing(file, text);
         sources.put(id, new Source(file, hash, next, true));
         rememberWagers(id, next);
     }
