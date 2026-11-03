@@ -316,7 +316,8 @@ public final class TableManager implements Listener, WagerHost {
             Table table=tables.get(id);if(table!=null) table.setEstatePending(pending);
         }
     }
-    public void checkpoint(Table table) throws IOException { saveWager(table); }
+    /** Save the table and put the save on disk: an estate plan written next takes it as its "before". */
+    public void checkpoint(Table table) throws IOException { saveWager(table); flushTableSaves(); }
     public void estateOwner(UUID id,UUID account,UUID character) {
         Table table=tables.get(id);
         if(table!=null) { table.setOwnerPlayer(account);table.setOwnerCharacterId(character);refreshLabel(table); }

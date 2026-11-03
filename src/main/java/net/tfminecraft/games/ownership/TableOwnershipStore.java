@@ -22,7 +22,9 @@ public final class TableOwnershipStore {
 
     /**
      * The bytes this store last saw at a table's path. {@code durable} is set only when this
-     * process wrote them itself and the whole write, directory flush included, succeeded.
+     * process wrote them itself and the write succeeded: the data is synced, and the folder too for
+     * a new file. A replaced file's folder is flushed by the wager journal or an estate checkpoint
+     * before anything relies on it ({@code TableManager.flushTableSaves}).
      */
     private record Source(Path path, String hash, JsonObject raw, boolean durable) {}
 
