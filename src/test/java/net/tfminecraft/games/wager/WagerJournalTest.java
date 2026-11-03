@@ -213,7 +213,7 @@ class WagerJournalTest {
                 mockStatic(net.tfminecraft.games.persistence.DurableFiles.class, CALLS_REAL_METHODS)) {
             assertEquals(5, funding(5).commit().moved());
             files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.write(eq(journal()), anyString()), times(1));
-            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.delete(journal()), times(1));
+            files.verify(() -> net.tfminecraft.games.persistence.DurableFiles.deleteUnflushed(journal()), times(1));
         }
         assertFalse(Files.exists(journal()));
         verify(manager).saveWager(table);

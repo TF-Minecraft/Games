@@ -193,7 +193,7 @@ class TableOwnerSessionTest extends TableManagerFixture {
                         net.tfminecraft.games.persistence.DurableFiles.class, CALLS_REAL_METHODS)) {
             writer.when(
                             () ->
-                                    net.tfminecraft.games.persistence.DurableFiles.write(
+                                    net.tfminecraft.games.persistence.DurableFiles.writeReplacing(
                                             eq(file), anyString()))
                     .thenThrow(new java.io.IOException("session checkpoint cut"));
             manager.beginSession(table);

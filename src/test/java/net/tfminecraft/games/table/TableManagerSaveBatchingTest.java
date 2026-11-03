@@ -39,7 +39,7 @@ class TableManagerSaveBatchingTest extends TableManagerHandFixture {
     }
 
     private static void verifyWrites(MockedStatic<DurableFiles> writes, Table table, int times) {
-        writes.verify(() -> DurableFiles.write(
+        writes.verify(() -> DurableFiles.writeReplacing(
                 argThat((Path path) -> path != null && path.getFileName().toString().equals(table.getId() + ".json")),
                 anyString()), times(times));
     }
@@ -124,7 +124,7 @@ class TableManagerSaveBatchingTest extends TableManagerHandFixture {
     }
 
     private static void failWrites(MockedStatic<DurableFiles> writes, Table table) {
-        writes.when(() -> DurableFiles.write(
+        writes.when(() -> DurableFiles.writeReplacing(
                 argThat((Path path) -> path != null && path.getFileName().toString().equals(table.getId() + ".json")),
                 anyString())).thenThrow(new java.io.IOException("disk full"));
     }
